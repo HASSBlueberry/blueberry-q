@@ -6,12 +6,13 @@
   ],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://git.crit.rip/BlueberryFaygo/BlueberryFaygo/tree/main/sre/BlueberryQ",
+  "documentation": "https://git.crit.rip/BlueberryFaygo/BlueberryFaygo/src/branch/main/sre/BlueberryQ",
   "integration_type": "device",
   "iot_class": "cloud_polling",
   "requirements": [],
   "version": "0.3.0",
   "after_dependencies": [
     "mqtt"
-  ]
+  ],
+  "issue_tracker": "https://git.crit.rip/BlueberryFaygo/BlueberryFaygo/issues"
 }
