@@ -1,4 +1,5 @@
 import voluptuous as vol
+from homeassistant.helpers import selector
 from homeassistant import config_entries
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from aiohttp import ClientError
@@ -12,19 +13,58 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def async_step_user(self, user_input=None):
+        if not self.show_advanced_options:
+            return await self.async_step_login(user_input)
         if user_input:
             if user_input['mode'] == 'cloud':
                 return await self.async_step_cloud()
+            if user_input['mode'] == 'password':
+                return await self.async_step_login()
             return await self.async_step_mqtt()
         return self.async_show_form(step_id='user', data_schema=vol.Schema({
-            vol.Required('mode', default='cloud'): vol.In({'cloud': 'myQ provider sign-in', 'mqtt': 'Existing MQTT relay'})
+            vol.Required('mode', default='password'): vol.In({'password': 'myQ email and password', 'cloud': 'Provider browser sign-in, including Amazon when offered', 'mqtt': 'Existing MQTT relay'})
         }))
+
+    async def async_step_login(self, user_input=None):
+        errors = {}
+        if user_input:
+            self._cloud = MyQCloud(async_get_clientsession(self.hass),
+                                   {'client_secret': user_input.get('client_secret', '')})
+            try:
+                await self._cloud.login_password(user_input['username'], user_input['password'])
+                return await self._complete_cloud()
+            except (ClientError, TimeoutError, ValueError, KeyError):
+                self._auth_url = self._cloud.begin()
+                return await self.async_step_callback()
+        fields = {vol.Required('username'): str, vol.Required('password'): selector.TextSelector({'type': 'password'})}
+        if self.show_advanced_options:
+            fields[vol.Optional('client_secret', default='')] = str
+        return self.async_show_form(step_id='login', data_schema=vol.Schema(fields), errors=errors)
+
+    async def _complete_cloud(self):
+        devices = await self._cloud.devices()
+        if not devices:
+            raise ValueError('No supported devices')
+        account_ids = sorted({d['account_id'] for d in devices.values()})
+        await self.async_set_unique_id('cloud:' + ','.join(account_ids))
+        if getattr(self, '_reauth_entry', None):
+            if self._reauth_entry.unique_id != self.unique_id:
+                return self.async_abort(reason='wrong_account')
+            self.hass.config_entries.async_update_entry(self._reauth_entry, data={'mode': 'cloud', **self._cloud.data})
+            await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
+            return self.async_abort(reason='reauth_successful')
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(title='myQ cloud', data={'mode': 'cloud', **self._cloud.data})
 
     async def async_step_reauth(self, entry_data):
         self._reauth_entry = self.hass.config_entries.async_get_entry(self.context['entry_id'])
-        return await self.async_step_cloud()
+        return await self.async_step_login()
 
     async def async_step_cloud(self, user_input=None):
+        if not self.show_advanced_options and not user_input:
+            self._cloud = MyQCloud(async_get_clientsession(self.hass))
+            self._auth_url = self._cloud.begin()
+            return await self.async_step_callback()
         if user_input:
             self._cloud = MyQCloud(async_get_clientsession(self.hass), user_input)
             self._auth_url = self._cloud.begin()
@@ -32,7 +72,7 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id='cloud', data_schema=vol.Schema({
             vol.Required('client_id', default='ANDROID_CGI_MYQ'): str,
             vol.Required('redirect_uri', default='com.myqops://android'): str,
-            vol.Optional('client_secret', default=''): str,
+            vol.Optional('client_secret', default=''): selector.TextSelector({'type': 'password'}),
         }))
 
     async def async_step_callback(self, user_input=None):
@@ -40,21 +80,7 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input:
             try:
                 await self._cloud.finish(user_input['callback_url'])
-                devices = await self._cloud.devices()
-                if not devices:
-                    errors['base'] = 'no_devices'
-                    self._auth_url = self._cloud.begin()
-                else:
-                    account_ids = sorted({d['account_id'] for d in devices.values()})
-                    await self.async_set_unique_id('cloud:' + ','.join(account_ids))
-                    if getattr(self, '_reauth_entry', None):
-                        if self._reauth_entry.unique_id != self.unique_id:
-                            return self.async_abort(reason='wrong_account')
-                        self.hass.config_entries.async_update_entry(self._reauth_entry, data={'mode': 'cloud', **self._cloud.data})
-                        await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
-                        return self.async_abort(reason='reauth_successful')
-                    self._abort_if_unique_id_configured()
-                    return self.async_create_entry(title='myQ cloud', data={'mode': 'cloud', **self._cloud.data})
+                return await self._complete_cloud()
             except (ClientError, TimeoutError, ValueError, KeyError):
                 errors['base'] = 'cloud_auth_failed'
                 self._auth_url = self._cloud.begin()

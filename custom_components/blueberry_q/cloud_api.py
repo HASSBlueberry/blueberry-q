@@ -11,6 +11,11 @@ from urllib.parse import parse_qs, quote, urlencode, urlsplit
 IDENTITY = 'https://partner-identity.myq-cloud.com'
 
 
+class MyQCloudAuthError(ValueError):
+    """The provider session requires a new sign-in."""
+
+
+
 class MyQCloud:
     def __init__(self, session, data=None):
         self.session = session
@@ -48,6 +53,8 @@ class MyQCloud:
         if self.data.get('client_secret'):
             fields['client_secret'] = self.data['client_secret']
         async with self.session.post(IDENTITY + '/connect/token', data=fields, timeout=30) as response:
+            if response.status in (400, 401):
+                raise MyQCloudAuthError('Provider token exchange was rejected')
             response.raise_for_status()
             payload = await response.json()
         if not payload.get('access_token'):
@@ -60,7 +67,7 @@ class MyQCloud:
         async with self.lock:
             if float(self.data.get('expires_at', 0)) < time.time() + 60:
                 if not self.data.get('refresh_token'):
-                    raise ValueError('Sign in to myQ again')
+                    raise MyQCloudAuthError('Sign in to myQ again')
                 await self._token({'grant_type': 'refresh_token', 'refresh_token': self.data['refresh_token']})
             headers = {'Authorization': 'Bearer ' + self.data['access_token'], 'BrandId': '1'}
             async with self.session.request(method, url, headers=headers, timeout=30) as response:
@@ -88,3 +95,61 @@ class MyQCloud:
         account = quote(device['account_id'], safe='')
         serial = quote(device['serial_number'], safe='')
         await self.request('PUT', f'https://account-devices-gdo.myq-cloud.com/api/v5.2/Accounts/{account}/door_openers/{serial}/{action}')
+
+    async def login_password(self, username, password):
+        """Complete the provider form with an isolated cookie jar and bounded redirects."""
+        from html.parser import HTMLParser
+        from urllib.parse import urljoin
+        from aiohttp import ClientSession, ClientTimeout
+
+        class LoginForm(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.forms = []
+                self.form = None
+            def handle_starttag(self, tag, attrs):
+                attrs = dict(attrs)
+                if tag == 'form':
+                    self.form = {'action': attrs.get('action', ''), 'fields': {}}
+                    self.forms.append(self.form)
+                if tag == 'input' and self.form is not None and attrs.get('name'):
+                    self.form['fields'][attrs['name']] = attrs.get('value', '')
+            def handle_endtag(self, tag):
+                if tag == 'form':
+                    self.form = None
+
+        url = self.begin()
+        method, fields = 'GET', None
+        submitted = False
+        async with ClientSession(timeout=ClientTimeout(total=30)) as session:
+            for _ in range(12):
+                parsed = urlsplit(url)
+                if parsed.scheme == 'com.myqops':
+                    await self.finish(url)
+                    return
+                if parsed.scheme != 'https' or parsed.hostname != 'partner-identity.myq-cloud.com':
+                    raise ValueError('Provider requires browser sign-in')
+                async with session.request(method, url, data=fields, allow_redirects=False) as response:
+                    if response.status in (301, 302, 303, 307, 308):
+                        destination = response.headers.get('Location')
+                        if not destination:
+                            raise ValueError('Missing sign-in redirect')
+                        url = urljoin(url, destination)
+                        # Never forward password form bodies across redirects.
+                        method, fields = 'GET', None
+                        continue
+                    response.raise_for_status()
+                    page = await response.text()
+                parser = LoginForm()
+                parser.feed(page)
+                form = next((form for form in parser.forms
+                             if 'Password' in form['fields'] and 'Email' in form['fields']), None)
+                if submitted or form is None:
+                    raise ValueError('Provider requires browser sign-in or rejected credentials')
+                destination = urljoin(url, form['action'])
+                parsed = urlsplit(destination)
+                if parsed.scheme != 'https' or parsed.hostname != 'partner-identity.myq-cloud.com':
+                    raise ValueError('Unexpected password form host')
+                fields = {**form['fields'], 'Email': username, 'Password': password}
+                url, method, submitted = destination, 'POST', True
+        raise ValueError('Too many provider redirects')

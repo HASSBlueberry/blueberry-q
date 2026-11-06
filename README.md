@@ -5,20 +5,38 @@ It is independent of BlueberryProxy. BlueberryProxy may provide DNS steering,
 but the opener-facing protocol, device credentials, state and Home Assistant
 entities belong here.
 
+## Simplified Home Assistant setup
+
+Version 0.3 starts with myQ email/password and attempts the provider's OAuth
+login form, retaining CSRF fields and using an isolated cookie session. It
+validates PKCE state, exchanges the authorization code, and discovers account
+garage door openers. The password is not saved. Later account refreshes add
+new garage door covers automatically. Other MyQ device families do not yet
+have entity implementations.
+
+If the automated provider login cannot finish, setup offers browser sign-in.
+This fallback still needs the full final callback URL copied into setup.
+Amazon sign-in can be used if the provider offers it in that browser flow;
+Amazon Key delivery linking is separate. Enable advanced setup for OAuth
+client settings or an existing MQTT relay. Some OAuth clients require a
+client secret, and provider blocks or MFA may prevent automatic login.
+These restrictions cannot be eliminated by simplifying the HA form. The
+flow and discovery checks are offline tests, not a live account certification.
+
 ## Current verified scope
 
 MyQ's public consumer documentation does not describe a local LAN API. Its
 integration page describes partnership API access for approved integrations,
 and directs homeowners to the myQ app. This repository does not claim an
-official local handoff or vendor API access. The HA component below is only a
-client for a separately installed and configured MQTT relay.
+official local handoff or vendor API access. The integration includes an experimental client for private application API
+endpoints and a client for an independently configured MQTT relay.
 
 Home Assistant removed its MyQ cloud integration after the provider blocked
 third-party access. For supported local control, Home Assistant recommends
 ratgdo, which connects to the opener's Security+ interface and uses its own
-ESPHome integration. The official myQ app remains the vendor's remote-control
-path. BlueberryQ should be used only with an independently configured,
-device-facing relay. It does not replace either provider path.
+ESPHome integration. The official myQ app remains the vendor's supported remote-control path.
+BlueberryQ cloud mode is experimental and is not endorsed by the vendor.
+MQTT mode requires a separate device-facing relay.
 
 The available public analysis covers one board and firmware combination,
 Chamberlain logic board `050DCTWF` running firmware `3.13`. That device connects
@@ -87,8 +105,9 @@ linked provider page to sign in with username/password. Use Amazon sign-in if
 the provider offers it on that page. Copy the full registered callback URL
 into setup to finish authorization. This is currently a manual callback
 exchange, including for application deep links. Browser developer tools may
-be needed to capture the redirect before the installed app consumes it. No
-Amazon or myQ password is collected or stored by BlueberryQ. OAuth tokens and
+be needed to capture the redirect before the installed app consumes it. Browser sign-in keeps the account password on the provider page. The simple
+email/password flow sends it once to the provider login form and does not
+persist it. OAuth tokens and
 an optional client secret are stored in HA config entry storage.
 
 The application API is undocumented and this integration is not endorsed by

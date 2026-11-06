@@ -13,7 +13,7 @@
       "user": {
         "title": "MyQ connection",
         "data": {
-          "mode": "Control provider"
+          "mode": "Setup method"
         }
       },
       "cloud": {
@@ -27,9 +27,18 @@
       },
       "callback": {
         "title": "Complete provider sign-in",
-        "description": "[Open myQ sign-in]({auth_url}). Enter username/password there, or choose Amazon if the provider offers it. After authorization, copy the complete callback URL including code and state into this form. With an app callback URI, you may need browser developer tools to copy the redirect before the app opens. Amazon Key linking alone does not grant this integration API access.",
+        "description": "[Continue with myQ]({auth_url}). Use your provider login, including Amazon if offered. Copy the full final callback URL here, including code and state. The app callback may need to be copied from browser developer tools. Amazon Key account linking is a separate delivery feature. If the provider requires a client secret, enable advanced setup.",
         "data": {
           "callback_url": "Complete OAuth callback URL"
+        }
+      },
+      "login": {
+        "title": "Sign in to myQ",
+        "description": "Sign in to discover garage doors automatically. If the provider needs browser verification or a different login method, setup will offer its sign-in page. Your password is used for this attempt and is not saved.",
+        "data": {
+          "username": "myQ email",
+          "password": "myQ password",
+          "client_secret": "OAuth client secret, if required"
         }
       }
     },
@@ -37,6 +46,12 @@
       "invalid_opener_id": "Enter a ten-character hexadecimal serial and six-byte hexadecimal opener ID",
       "cloud_auth_failed": "Provider sign-in or account discovery failed. The API may require client credentials or block third-party access. Start a fresh sign-in before submitting another code.",
       "no_devices": "No supported garage door openers found on this account."
+    },
+    "abort": {
+      "wrong_account": "Sign in to the same account as this integration entry.",
+      "reauth_successful": "Sign-in updated.",
+      "reconfigure_successful": "Device selection updated.",
+      "already_configured": "This account or device is already configured."
     }
   }
 }

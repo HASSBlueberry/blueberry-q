@@ -19,8 +19,14 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass, entry, async_add_entities):
     if entry.data.get('mode') == 'cloud':
         store = hass.data[DOMAIN][entry.entry_id]
-        async_add_entities([MyQCloudCover(store['coordinator'], store['api'], key)
-                            for key in store['coordinator'].data])
+        seen = set()
+        def discover():
+            keys = set(store['coordinator'].data) - seen
+            seen.update(keys)
+            if keys:
+                async_add_entities([MyQCloudCover(store['coordinator'], store['api'], key) for key in keys])
+        discover()
+        entry.async_on_unload(store['coordinator'].async_add_listener(discover))
         return
     async_add_entities([MyQCover(entry.data["serial"], entry.data["opener_id"],
                                 entry.data["name"])])

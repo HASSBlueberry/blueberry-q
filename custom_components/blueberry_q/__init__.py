@@ -6,7 +6,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from aiohttp import ClientResponseError, ClientError
 from datetime import timedelta
 import logging
-from .cloud_api import MyQCloud
+from .cloud_api import MyQCloud, MyQCloudAuthError
 
 from .const import DOMAIN
 
@@ -25,6 +25,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if client.data != dict(entry.data):
                     hass.config_entries.async_update_entry(entry, data=client.data)
                 return result
+            except MyQCloudAuthError as err:
+                raise ConfigEntryAuthFailed('myQ session needs a new sign-in') from err
             except ClientResponseError as err:
                 if err.status == 401:
                     raise ConfigEntryAuthFailed('myQ sign-in expired') from err
