@@ -1,0 +1,17 @@
+{
+  "domain": "blueberry_q",
+  "name": "Blueberry MyQ",
+  "codeowners": [
+    "@BlueberryFaygo"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://git.crit.rip/BlueberryFaygo/BlueberryFaygo/tree/main/sre/BlueberryQ",
+  "integration_type": "device",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "0.2.0",
+  "after_dependencies": [
+    "mqtt"
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "mqtt": {
+        "title": "MyQ MQTT relay client",
+        "description": "This is only an MQTT client for an already-running device-facing relay. For local MyQ opener control, Home Assistant recommends ratgdo. Use the official myQ app for provider remote control.",
+        "data": {
+          "serial": "10-character MyQ serial",
+          "opener_id": "Six-byte opener ID in hex",
+          "name": "Cover name"
+        }
+      },
+      "user": {
+        "title": "MyQ connection",
+        "data": {
+          "mode": "Control provider"
+        }
+      },
+      "cloud": {
+        "title": "myQ application OAuth",
+        "description": "Experimental app API access. The provider may require a client secret for this client ID. Enter credentials belonging to an OAuth client you can use. Sign in with your username/password on the provider page in the next step.",
+        "data": {
+          "client_id": "OAuth client ID",
+          "client_secret": "OAuth client secret, if required",
+          "redirect_uri": "Registered callback URI"
+        }
+      },
+      "callback": {
+        "title": "Complete provider sign-in",
+        "description": "[Open myQ sign-in]({auth_url}). Enter username/password there, or choose Amazon if the provider offers it. After authorization, copy the complete callback URL including code and state into this form. With an app callback URI, you may need browser developer tools to copy the redirect before the app opens. Amazon Key linking alone does not grant this integration API access.",
+        "data": {
+          "callback_url": "Complete OAuth callback URL"
+        }
+      }
+    },
+    "error": {
+      "invalid_opener_id": "Enter a ten-character hexadecimal serial and six-byte hexadecimal opener ID",
+      "cloud_auth_failed": "Provider sign-in or account discovery failed. The API may require client credentials or block third-party access. Start a fresh sign-in before submitting another code.",
+      "no_devices": "No supported garage door openers found on this account."
+    }
+  }
+}
