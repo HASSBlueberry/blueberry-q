@@ -27,25 +27,65 @@
       },
       "callback": {
         "title": "Complete provider sign-in",
-        "description": "[Continue with myQ]({auth_url}). Use your provider login, including Amazon if offered. Copy the full final callback URL here, including code and state. The app callback may need to be copied from browser developer tools. Amazon Key account linking is a separate delivery feature. If the provider requires a client secret, enable advanced setup.",
+        "description": "[Continue with myQ]({auth_url}). Finish sign-in and any verification on the provider page, then paste the complete com.myqops callback URL including code, state and issuer. Use the link from this setup session. If a code expires, select Start a fresh sign-in and submit to generate a new link. Amazon sign-in is available when offered by myQ.",
         "data": {
-          "callback_url": "Complete OAuth callback URL"
+          "callback_url": "Complete OAuth callback URL",
+          "restart_login": "Start a fresh sign-in"
         }
       },
       "login": {
         "title": "Sign in to myQ",
-        "description": "Sign in to discover garage doors automatically. If the provider needs browser verification or a different login method, setup will offer its sign-in page. Your password is used for this attempt and is not saved.",
+        "description": "Sign in to discover garage doors. If myQ requests a verification code, Home Assistant opens a separate verification step. Your password and verification code are not saved. For Amazon or additional browser checks, select browser sign-in.",
         "data": {
           "username": "myQ email",
           "password": "myQ password",
-          "client_secret": "OAuth client secret, if required"
+          "client_secret": "OAuth client secret, if required",
+          "use_browser": "Use provider browser sign-in instead"
+        }
+      },
+      "verification": {
+        "title": "myQ verification code",
+        "description": "Enter the code requested by myQ. This continues the same sign-in session. An incorrect code can be retried here. The session expires after ten minutes of inactivity.",
+        "data": {
+          "code": "Verification code"
+        }
+      },
+      "verification_method": {
+        "title": "myQ verification delivery",
+        "description": "Choose a method offered by myQ to receive your verification code.",
+        "data": {
+          "method": "Verification method"
+        }
+      },
+      "discover": {
+        "title": "Discover myQ garage doors",
+        "description": "Sign-in has completed. Retry device discovery without exchanging the authorization code again. If access was revoked, start sign-in again.",
+        "data": {
+          "restart_login": "Start sign-in again"
         }
       }
     },
     "error": {
       "invalid_opener_id": "Enter a ten-character hexadecimal serial and six-byte hexadecimal opener ID",
-      "cloud_auth_failed": "Provider sign-in or account discovery failed. The API may require client credentials or block third-party access. Start a fresh sign-in before submitting another code.",
-      "no_devices": "No supported garage door openers found on this account."
+      "cloud_auth_failed": "The provider sign-in could not be completed. Retry or select browser sign-in.",
+      "no_devices": "No supported garage door openers found on this account.",
+      "invalid_auth": "myQ rejected the email or password. Check them and try again.",
+      "missing_credentials": "Enter your email and password or select provider browser sign-in.",
+      "verification_invalid": "The verification code was not accepted. Enter the current code and try again.",
+      "verification_session_lost": "The verification session ended or could not be continued. Sign in again to request a new code.",
+      "cannot_connect": "Could not reach myQ. Check connectivity and retry.",
+      "browser_required": "myQ requires browser verification. Continue using the provider sign-in link.",
+      "oauth_session_lost": "The original sign-in session is no longer available. Start a fresh sign-in from this setup dialog.",
+      "oauth_state_mismatch": "This callback belongs to a different sign-in attempt. Use the link currently shown in this setup dialog or start a fresh sign-in.",
+      "oauth_issuer_mismatch": "The callback issuer does not match the myQ identity provider.",
+      "invalid_callback": "Paste the full registered callback URL, including one code and one state value.",
+      "oauth_access_denied": "myQ did not authorize this sign-in. Start a fresh sign-in and finish the provider prompts.",
+      "oauth_code_expired": "myQ rejected the authorization code as expired, already used or invalid for this setup session. Start a fresh sign-in.",
+      "oauth_client_rejected": "myQ rejected the OAuth client credentials. Check advanced client settings or use a client you are authorized to use.",
+      "oauth_token_rejected": "myQ rejected the token exchange. Start a fresh sign-in and check client settings if it repeats.",
+      "account_auth_failed": "The myQ account session expired. Start sign-in again.",
+      "account_access_denied": "Sign-in completed, but myQ denied account or device API access. Retrying the callback will not grant API access.",
+      "discovery_failed": "Sign-in completed, but device discovery failed. Submit again to retry discovery without reusing the authorization code."
     },
     "abort": {
       "wrong_account": "Sign in to the same account as this integration entry.",

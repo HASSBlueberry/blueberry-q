@@ -16,11 +16,22 @@ class MyQCloudAuthError(ValueError):
 
 
 
+class OAuthCallbackError(ValueError):
+    def __init__(self,reason):
+        super().__init__(reason);self.reason=reason
+
+class TokenExchangeError(MyQCloudAuthError):
+    def __init__(self,reason):
+        super().__init__('Provider token exchange failed');self.reason=reason
+
 class MyQCloud:
+    IDENTITY=IDENTITY
     def __init__(self, session, data=None):
         self.session = session
         self.data = dict(data or {})
         self.lock = asyncio.Lock()
+        self._login=None
+        self._login_timer=None
 
     def begin(self):
         self.verifier = secrets.token_urlsafe(48)
@@ -35,17 +46,24 @@ class MyQCloud:
         })
 
     async def finish(self, callback):
-        parsed = urlsplit(callback)
-        expected = urlsplit(self.data.get('redirect_uri', 'com.myqops://android'))
-        if (parsed.scheme, parsed.netloc, parsed.path) != (expected.scheme, expected.netloc, expected.path):
-            raise ValueError('Unexpected OAuth redirect')
-        params = parse_qs(parsed.query)
-        if not secrets.compare_digest(params.get('state', [''])[0], self.state):
-            raise ValueError('OAuth state mismatch')
-        code = params.get('code', [''])[0]
-        if not code:
-            raise ValueError('Authorization did not return a code')
-        await self._token({'grant_type': 'authorization_code', 'code': code, 'code_verifier': self.verifier})
+        if not getattr(self,'state',None) or not getattr(self,'verifier',None):
+            raise OAuthCallbackError('oauth_session_lost')
+        try:parsed=urlsplit(callback.strip())
+        except (ValueError,AttributeError):raise OAuthCallbackError('invalid_callback') from None
+        expected=urlsplit(self.data.get('redirect_uri','com.myqops://android'))
+        if (parsed.scheme,parsed.netloc,parsed.path)!=(expected.scheme,expected.netloc,expected.path) or parsed.fragment:
+            raise OAuthCallbackError('invalid_callback')
+        params=parse_qs(parsed.query,keep_blank_values=True)
+        if any(len(values)!=1 for key,values in params.items() if key in ('state','code','iss','error')):
+            raise OAuthCallbackError('invalid_callback')
+        if not secrets.compare_digest(params.get('state',[''])[0].encode(),self.state.encode()):
+            raise OAuthCallbackError('oauth_state_mismatch')
+        if 'iss' in params and params['iss'][0].rstrip('/')!=IDENTITY:
+            raise OAuthCallbackError('oauth_issuer_mismatch')
+        if params.get('error'):raise OAuthCallbackError('oauth_access_denied')
+        code=params.get('code',[''])[0]
+        if not code:raise OAuthCallbackError('invalid_callback')
+        await self._token({'grant_type':'authorization_code','code':code,'code_verifier':self.verifier})
 
     async def _token(self, form):
         fields = {'client_id': self.data.get('client_id', 'ANDROID_CGI_MYQ'),
@@ -53,8 +71,12 @@ class MyQCloud:
         if self.data.get('client_secret'):
             fields['client_secret'] = self.data['client_secret']
         async with self.session.post(IDENTITY + '/connect/token', data=fields, timeout=30) as response:
-            if response.status in (400, 401):
-                raise MyQCloudAuthError('Provider token exchange was rejected')
+            if response.status in (400,401,403):
+                try:error=(await response.json()).get('error')
+                except (ValueError,AttributeError):error=None
+                reason={'invalid_client':'oauth_client_rejected','invalid_grant':'oauth_code_expired',
+                        'access_denied':'oauth_access_denied'}.get(error,'oauth_token_rejected')
+                raise TokenExchangeError(reason)
             response.raise_for_status()
             payload = await response.json()
         if not payload.get('access_token'):
@@ -96,60 +118,41 @@ class MyQCloud:
         serial = quote(device['serial_number'], safe='')
         await self.request('PUT', f'https://account-devices-gdo.myq-cloud.com/api/v5.2/Accounts/{account}/door_openers/{serial}/{action}')
 
-    async def login_password(self, username, password):
-        """Complete the provider form with an isolated cookie jar and bounded redirects."""
-        from html.parser import HTMLParser
-        from urllib.parse import urljoin
-        from aiohttp import ClientSession, ClientTimeout
+    async def close_login(self):
+        if self._login_timer:self._login_timer.cancel();self._login_timer=None
+        login,self._login=self._login,None
+        if login:await login.close()
 
-        class LoginForm(HTMLParser):
-            def __init__(self):
-                super().__init__()
-                self.forms = []
-                self.form = None
-            def handle_starttag(self, tag, attrs):
-                attrs = dict(attrs)
-                if tag == 'form':
-                    self.form = {'action': attrs.get('action', ''), 'fields': {}}
-                    self.forms.append(self.form)
-                if tag == 'input' and self.form is not None and attrs.get('name'):
-                    self.form['fields'][attrs['name']] = attrs.get('value', '')
-            def handle_endtag(self, tag):
-                if tag == 'form':
-                    self.form = None
+    def _arm_login_timeout(self):
+        if self._login_timer:self._login_timer.cancel()
+        self._login_timer=asyncio.get_running_loop().call_later(600,lambda:asyncio.create_task(self.close_login()))
 
-        url = self.begin()
-        method, fields = 'GET', None
-        submitted = False
-        async with ClientSession(timeout=ClientTimeout(total=30)) as session:
-            for _ in range(12):
-                parsed = urlsplit(url)
-                if parsed.scheme == 'com.myqops':
-                    await self.finish(url)
-                    return
-                if parsed.scheme != 'https' or parsed.hostname != 'partner-identity.myq-cloud.com':
-                    raise ValueError('Provider requires browser sign-in')
-                async with session.request(method, url, data=fields, allow_redirects=False) as response:
-                    if response.status in (301, 302, 303, 307, 308):
-                        destination = response.headers.get('Location')
-                        if not destination:
-                            raise ValueError('Missing sign-in redirect')
-                        url = urljoin(url, destination)
-                        # Never forward password form bodies across redirects.
-                        method, fields = 'GET', None
-                        continue
-                    response.raise_for_status()
-                    page = await response.text()
-                parser = LoginForm()
-                parser.feed(page)
-                form = next((form for form in parser.forms
-                             if 'Password' in form['fields'] and 'Email' in form['fields']), None)
-                if submitted or form is None:
-                    raise ValueError('Provider requires browser sign-in or rejected credentials')
-                destination = urljoin(url, form['action'])
-                parsed = urlsplit(destination)
-                if parsed.scheme != 'https' or parsed.hostname != 'partner-identity.myq-cloud.com':
-                    raise ValueError('Unexpected password form host')
-                fields = {**form['fields'], 'Email': username, 'Password': password}
-                url, method, submitted = destination, 'POST', True
-        raise ValueError('Too many provider redirects')
+    async def _advance_login(self,operation):
+        from .login import VerificationRequired,VerificationMethodRequired
+        if self._login_timer:self._login_timer.cancel();self._login_timer=None
+        try:
+            await operation()
+        except (VerificationRequired,VerificationMethodRequired):
+            self._arm_login_timeout()
+            raise
+        except BaseException:
+            await self.close_login()
+            raise
+        await self.close_login()
+
+    async def login_password(self,username,password):
+        """Continue the provider's own forms, pausing for its MFA challenge."""
+        from .login import ProviderLogin
+        await self.close_login()
+        self._login=ProviderLogin(self,username,password)
+        await self._advance_login(self._login.advance)
+
+    async def submit_verification(self,code):
+        from .login import BrowserRequired
+        if not self._login:raise BrowserRequired('Verification session expired')
+        await self._advance_login(lambda:self._login.submit_code(code))
+
+    async def choose_verification_method(self,method):
+        from .login import BrowserRequired
+        if not self._login:raise BrowserRequired('Verification session expired')
+        await self._advance_login(lambda:self._login.choose_method(method))

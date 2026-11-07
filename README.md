@@ -7,21 +7,15 @@ entities belong here.
 
 ## Simplified Home Assistant setup
 
-Version 0.3 starts with myQ email/password and attempts the provider's OAuth
-login form, retaining CSRF fields and using an isolated cookie session. It
-validates PKCE state, exchanges the authorization code, and discovers account
-garage door openers. The password is not saved. Later account refreshes add
-new garage door covers automatically. Other MyQ device families do not yet
-have entity implementations.
+Version 0.4 starts with myQ email/password and follows the provider's login forms with an isolated cookie session. If the provider returns a verification-code form, HA opens a separate verification step. Delivery-method forms can open a method selector first. Passwords and codes are not saved. Cookies and CSRF fields stay in the same temporary session across prompts, incorrect codes can be retried, and the session closes on success, flow cancellation or ten minutes of inactivity.
 
-If the automated provider login cannot finish, setup offers browser sign-in.
-This fallback still needs the full final callback URL copied into setup.
-Amazon sign-in can be used if the provider offers it in that browser flow;
-Amazon Key delivery linking is separate. Enable advanced setup for OAuth
-client settings or an existing MQTT relay. Some OAuth clients require a
-client secret, and provider blocks or MFA may prevent automatic login.
-These restrictions cannot be eliminated by simplifying the HA form. The
-flow and discovery checks are offline tests, not a live account certification.
+The browser sign-in option is available on the login form, including Amazon when offered by myQ. JavaScript-only verification, CAPTCHA and external identity-provider challenges use this browser path. These cannot be handled as a generic OTP form. The full native callback URL must be copied back into the same HA setup dialog. Amazon Key delivery linking is separate.
+
+Callbacks validate the registered URI, state, PKCE verifier and optional issuer. A callback from another flow cannot be exchanged without that flow's verifier. Start a fresh sign-in after installing an update or restarting HA. Invalid callbacks retain the current state and link, and only the explicit fresh-sign-in option replaces them. Token errors distinguish an expired/used code from rejected client credentials. Provider error descriptions and callback codes are not logged. Advanced setup retains optional OAuth client settings and existing MQTT relay configuration.
+
+After token exchange, device discovery has its own retry step. A temporary account API failure does not redeem the authorization code a second time. API access denial is shown separately from credential errors. Later account refreshes add supported garage door covers automatically. Other myQ device families do not yet have entity implementations.
+
+Provider form handling is tested with simulated password, verification-code, delivery-method and callback exchanges, plus flow cancellation and discovery retries. The current live provider login page was checked for form and CSRF compatibility. Authenticated sign-in and MFA have not been certified with a live account, and the provider may reject private application API access.
 
 ## Current verified scope
 
