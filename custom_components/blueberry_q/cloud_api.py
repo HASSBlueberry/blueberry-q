@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlsplit
 import aiohttp
 
 IDENTITY = 'https://partner-identity.myq-cloud.com'
-USER_AGENT = 'BlueberryQ/0.6.0'
+USER_AGENT = 'BlueberryQ/0.6.1'
 
 
 class MyQCloudAuthError(ValueError):
@@ -70,6 +70,19 @@ class MyQCloud:
         self.lock = asyncio.Lock()
         self._login=None
         self._login_timer=None
+        self._app_check_cache=None
+
+    async def app_check_token(self):
+        """Reuse a live bridge token across preflight, browser sign-in and exchange."""
+        from .app_check import fetch_app_check_material, AppCheckBridgeError
+        cached=self._app_check_cache
+        if cached and cached['expires_at']>time.time()+30:
+            return cached['token']
+        try:
+            self._app_check_cache=await fetch_app_check_material(self.session,self.data)
+        except AppCheckBridgeError as error:
+            raise MyQCloudNetworkError(str(error)) from None
+        return self._app_check_cache['token']
 
     def begin(self, force_login=True):
         self.verifier = secrets.token_urlsafe(48)
@@ -118,11 +131,7 @@ class MyQCloud:
         # identity endpoint rejects that agent before OAuth grant validation.
         headers = {'User-Agent': USER_AGENT}
         if self.data.get('app_bridge_url'):
-            from .app_check import fetch_app_check, AppCheckBridgeError
-            try:
-                headers['Firebase-AppCheck-Token'] = await fetch_app_check(self.session, self.data)
-            except AppCheckBridgeError as error:
-                raise MyQCloudNetworkError(str(error)) from None
+            headers['Firebase-AppCheck-Token'] = await self.app_check_token()
         elif self.data.get('app_check_token'):
             from .app_check import prepare_manual_token, AppCheckBridgeError
             try:

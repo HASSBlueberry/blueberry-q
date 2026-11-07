@@ -91,12 +91,15 @@
       },
       "phone_login": {
         "title": "Sign in on your connected phone",
-        "description": "BlueberryQDB opens MyQ sign-in in Chrome on your selected Android phone. Unlock it and complete sign-in and any verification there. Home Assistant receives the result automatically. No access token or callback copying is needed. An existing App Check token can optionally seed the bridge cache. Leave the connection key blank to retain a discovered or saved key. Last token response, {token_diagnostic}.",
+        "description": "BlueberryQDB prepares Chrome on the selected phone, then gives you 15 minutes to finish MyQ sign-in and verification. Home Assistant receives the callback automatically. A current App Check token can optionally seed the bridge cache. Leave the connection key blank to retain a discovered or saved key. Current step, {phone_status}. {token_diagnostic}",
         "data": {
           "app_bridge_url": "BlueberryQDB URL",
           "app_bridge_key": "BlueberryQDB connection key",
           "app_check_token": "Existing App Check token, optional"
         }
+      },
+      "phone_wait": {
+        "title": "Complete sign-in on your phone"
       }
     },
     "error": {
@@ -163,11 +166,11 @@
       "oauth_grant_type_rejected": "myQ rejected the requested OAuth grant type. Review the token exchange diagnostic.",
       "phone_bridge_unavailable": "Cannot reach the phone login service. Install BlueberryQDB 0.2.0 or later and check its URL and connection key.",
       "phone_login_in_progress": "Another phone sign-in is in progress. Finish or cancel it before starting another.",
-      "phone_login_timeout": "Phone sign-in timed out after ten minutes. Start again.",
+      "phone_login_timeout": "The 15-minute phone sign-in window ended. Start again when ready.",
       "phone_login_cancelled": "Phone sign-in was cancelled. Start again when ready.",
       "phone_login_session_missing": "The phone sign-in session ended or the app restarted. Start a fresh sign-in.",
       "phone_callback_mismatch": "The phone callback does not match this sign-in. Start again.",
-      "phone_chrome_not_ready": "Install or enable Chrome on the selected phone, unlock it, and retry.",
+      "phone_chrome_not_ready": "Chrome was not ready within the preparation window. Unlock the selected phone and finish Chrome first-run prompts, then retry.",
       "phone_browser_unavailable": "Chrome could not be controlled on the phone. Unlock it and check USB debugging authorization.",
       "phone_browser_disconnected": "The phone browser disconnected. Reconnect and start sign-in again.",
       "phone_browser_command_failed": "Chrome could not continue sign-in. Update Chrome and retry.",
@@ -181,7 +184,8 @@
       "phone_offline": "The selected phone is offline. Reconnect it and unlock it.",
       "phone_no_permissions": "BlueberryQDB cannot access the USB phone. Check the app USB settings.",
       "select_one_phone": "Select one phone in BlueberryQDB before signing in.",
-      "invalid_app_check_token": "The optional App Check token could not be imported."
+      "invalid_app_check_token": "The optional App Check token could not be imported.",
+      "app_bridge_unauthorized": "BlueberryQDB rejected the connection key. Use the current key from its panel or Supervisor discovery."
     },
     "abort": {
       "wrong_account": "Sign in to the same account as this integration entry.",
@@ -192,7 +196,7 @@
       "cloud_only": "Reconfiguration is available for cloud accounts."
     },
     "progress": {
-      "phone_login": "Unlock the selected phone and complete MyQ sign-in and verification in Chrome. Home Assistant will finish automatically. Keep this dialog open."
+      "phone_login": "{phone_status}. Follow any prompts on the selected phone and keep this dialog open. Chrome preparation has its own window, followed by 15 minutes for sign-in."
     }
   }
 }

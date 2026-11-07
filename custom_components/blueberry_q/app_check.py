@@ -50,7 +50,7 @@ def bridge_url(value):
         raise AppCheckBridgeError('invalid_app_bridge_url') from None
 
 
-async def fetch_app_check(session, settings):
+async def fetch_app_check_material(session, settings):
     url = bridge_url(settings['app_bridge_url'])
     key = settings.get('app_bridge_key', '')
     if not key:
@@ -58,6 +58,8 @@ async def fetch_app_check(session, settings):
     try:
         async with session.get(url + '/v1/app-check', headers={'Authorization': 'Bearer ' + key},
                                timeout=30, allow_redirects=False) as response:
+            if response.status in (401,403):
+                raise AppCheckBridgeError('app_bridge_unauthorized')
             if response.status != 200:
                 raise AppCheckBridgeError('app_check_unavailable')
             payload = await response.json()
@@ -66,11 +68,15 @@ async def fetch_app_check(session, settings):
             raise ValueError
         if not isinstance(expiry, (int, float)) or isinstance(expiry, bool) or expiry <= time.time() + 30:
             raise ValueError
-        return token
+        return {'token':token,'expires_at':expiry}
     except AppCheckBridgeError:
         raise
     except (aiohttp.ClientError, TimeoutError, ValueError, TypeError, AttributeError):
         raise AppCheckBridgeError('app_check_unavailable') from None
+
+
+async def fetch_app_check(session, settings):
+    return (await fetch_app_check_material(session,settings))['token']
 
 PHONE_ERRORS = {
     'phone_login_in_progress','phone_login_timeout','phone_login_session_missing',
@@ -79,6 +85,7 @@ PHONE_ERRORS = {
     'phone_browser_forward_failed','phone_browser_target_invalid','invalid_authorize_url',
     'authorize_or_connect_phone','selected_phone_missing','phone_unauthorized',
     'phone_offline','phone_no_permissions','select_one_phone','invalid_app_check_token',
+    'app_bridge_unauthorized',
 }
 
 
@@ -91,6 +98,8 @@ async def phone_request(session, settings, method, path, payload=None):
         async with session.request(method,url+path,json=payload,
                                    headers={'Authorization':'Bearer '+key},
                                    timeout=30,allow_redirects=False) as response:
+            if response.status in (401,403):
+                raise AppCheckBridgeError('app_bridge_unauthorized')
             if response.status != 200:
                 try:
                     error = (await response.json()).get('error')
@@ -104,15 +113,33 @@ async def phone_request(session, settings, method, path, payload=None):
         raise AppCheckBridgeError('phone_bridge_unavailable') from None
 
 
-async def wait_phone_callback(session, settings, session_id):
+async def wait_phone_callback(session, settings, session_id, on_phase=None, poll_interval=2):
     import asyncio
     if not isinstance(session_id,str) or not re.fullmatch(r'[A-Za-z0-9_-]{32,128}',session_id):
         raise AppCheckBridgeError('phone_login_session_missing')
-    deadline = time.monotonic()+600
+    # QDB supplies its current deadline; Chrome preparation is separate from
+    # the human sign-in window and may extend the initial session lifetime.
+    overall_deadline = time.monotonic()+1200
+    deadline=overall_deadline
+    unavailable_since=None
     while time.monotonic() < deadline:
-        result = await phone_request(session,settings,'GET','/v1/oauth/sessions/'+session_id)
+        try:
+            result = await phone_request(session,settings,'GET','/v1/oauth/sessions/'+session_id)
+            unavailable_since=None
+        except AppCheckBridgeError as error:
+            if str(error)!='phone_bridge_unavailable':raise
+            unavailable_since=unavailable_since or time.monotonic()
+            if time.monotonic()-unavailable_since>=45:raise
+            await asyncio.sleep(poll_interval)
+            continue
         if not isinstance(result,dict):
             raise AppCheckBridgeError('phone_bridge_unavailable')
+        phase=result.get('failed_phase') or result.get('phase')
+        if on_phase and phase in ('opening_chrome','waiting_for_user','callback_captured'):
+            on_phase(phase)
+        expiry=result.get('expires_at')
+        if isinstance(expiry,(int,float)) and not isinstance(expiry,bool):
+            deadline=min(overall_deadline,time.monotonic()+max(0,expiry-time.time())+5)
         if result.get('status') == 'ready':
             callback = result.get('callback')
             if not isinstance(callback,str) or len(callback)>16000:
@@ -121,5 +148,5 @@ async def wait_phone_callback(session, settings, session_id):
         if result.get('status') != 'waiting':
             error = result.get('error')
             raise AppCheckBridgeError(error if isinstance(error,str) and error in PHONE_ERRORS else 'phone_bridge_unavailable')
-        await asyncio.sleep(2)
+        await asyncio.sleep(poll_interval)
     raise AppCheckBridgeError('phone_login_timeout')

@@ -219,3 +219,38 @@ since restarting discards any pending flow's verifier. The
 [sanitized live validation](research/hass-user-agent-validation.json) records
 the request comparison and successful refresh/discovery. No door command was
 sent.
+
+## Sign in through the connected phone
+
+Integration 0.6.0 and BlueberryQDB 0.2.0 add automatic phone-browser sign-in.
+Choose Sign in on connected phone with BlueberryQDB during setup, confirm the
+discovered connection, and finish any provider prompts in Chrome on the phone.
+Home Assistant handles callback capture, PKCE exchange, account tokens and
+discovery automatically. No pre-existing access token or OAuth client secret
+is required for the tested Android client. A manual App Check token can
+optionally seed the bridge cache if runtime logs have rotated.
+
+Existing entries can select phone sign-in from Reconfigure, and configured
+bridge entries use it for reauthentication. The callback and verifier belong
+to the same HASS flow. QDB receives no verifier or account tokens. The progress
+dialog can be cancelled to release the transient browser session. Passwords
+and MFA stay on the provider's phone page. Packaged end-to-end behavior still
+requires validation on the HASS-connected phone.
+
+## Phone timing and App Check fixes in 0.6.1
+
+Use BlueberryQDB 0.2.1 with integration 0.6.1. Chrome preparation no longer
+uses the human authentication window. The user receives 15 minutes once the
+browser is ready. Valid App Check material is retained across preflight and
+exchange, expired material is refreshed through the bridge, and callback
+delivery no longer waits for slow browser cleanup. The app tries native MyQ
+refresh activity without interrupting a managed Chrome login.
+
+The phone form no longer presents No token response recorded as if it were an
+authentication failure. Errors before OAuth exchange identify the actual phase
+and safe reason, while successful exchange is reported separately from device
+discovery. Regression tests include delayed callbacks beyond command timeout,
+separate startup/user budgets, token reuse during bridge outages, and stale
+log messages that must not overwrite a newer cache. Target-host behavior still
+requires live verification; these changes do not prove the exact failure in
+every phone/Chrome combination has been reproduced.

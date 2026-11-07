@@ -1,5 +1,7 @@
 import asyncio
 import re
+import time
+import logging
 from contextlib import suppress
 from pathlib import Path
 from .app_archive import load_app_material, AppArchiveError
@@ -11,7 +13,7 @@ from aiohttp import ClientError,ClientResponseError
 from .cloud_api import MyQCloud,MyQCloudAuthError,MyQCloudNetworkError,OAuthCallbackError,TokenExchangeError
 from .login import BrowserRequired,InvalidCredentials,ProviderHTTPError,ProviderNetworkError,VerificationRequired,VerificationMethodRequired
 from .const import DOMAIN
-from .app_check import bridge_url, AppCheckBridgeError, fetch_app_check, prepare_manual_token, phone_request, wait_phone_callback
+from .app_check import bridge_url, AppCheckBridgeError, prepare_manual_token, phone_request, wait_phone_callback
 
 AUTH_SETTINGS=('client_id','redirect_uri','client_secret','scope','app_check_token','app_bridge_url','app_bridge_key','app_bridge_id')
 
@@ -19,7 +21,7 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
     VERSION=2
 
     def async_remove(self):
-        if getattr(self,'_phone_task',None) and not self._phone_task.done():self._phone_task.cancel()
+        if getattr(self,'_phone_task',None) and not self._phone_task.done() and not self._phone_task.cancelling():self._phone_task.cancel()
         if getattr(self,'_cloud',None):asyncio.create_task(self._cloud.close_login())
 
     async def async_step_user(self,user_input=None):
@@ -31,6 +33,8 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
     async def async_step_phone_login(self,user_input=None,_error=None):
         errors={'base':_error} if _error else {}
         if user_input is not None:
+            self._phone_error=None
+            self._token_diagnostic=None
             try:
                 settings=self._client_settings(user_input)
                 if not settings.get('app_bridge_url'):raise AppCheckBridgeError('invalid_app_bridge_url')
@@ -43,13 +47,41 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
                 self._cloud=MyQCloud(async_get_clientsession(self.hass),settings)
                 self._phone_task=None
                 self._phone_error=None
+                self._token_diagnostic=None
+                self._phone_phase='checking_app_check'
                 return await self.async_step_phone_wait()
         defaults=self._client_settings()
         fields={vol.Required('app_bridge_url',default=defaults.get('app_bridge_url','')):str,
                 vol.Optional('app_bridge_key'):selector.TextSelector({'type':'password'}),
                 vol.Optional('app_check_token'):selector.TextSelector({'type':'password'})}
+        diagnostic=getattr(self,'_token_diagnostic',None) or ''
+        if getattr(self,'_phone_error',None) and not getattr(self,'_token_diagnostic',None):
+            diagnostic='No provider token response was received. Last failure, '+self._phone_error+'.'
         return self.async_show_form(step_id='phone_login',data_schema=vol.Schema(fields),errors=errors,
-            description_placeholders={'token_diagnostic':getattr(self,'_token_diagnostic','No token response recorded')})
+            description_placeholders={'token_diagnostic':diagnostic,'phone_status':self._phone_status_text()})
+
+    def _phone_status_text(self):
+        return {'checking_app_check':'Checking or refreshing App Check',
+                'opening_chrome':'Preparing Chrome on the phone',
+                'waiting_for_user':'Waiting for you to complete sign-in on the phone',
+                'callback_captured':'Phone callback captured',
+                'exchanging_token':'Exchanging the OAuth authorization code',
+                'discovering_devices':'Signed in and discovering devices'}.get(getattr(self,'_phone_phase',None),'Ready to start phone sign-in')
+
+    async def _ensure_phone_app_check(self,timeout=180):
+        deadline=time.monotonic()+timeout
+        requested=False
+        while True:
+            try:
+                await self._cloud.app_check_token()
+                return
+            except MyQCloudNetworkError as error:
+                if error.reason!='app_check_unavailable' or time.monotonic()>=deadline:raise
+                if not requested:
+                    requested=True
+                    with suppress(AppCheckBridgeError):
+                        await phone_request(async_get_clientsession(self.hass),self._cloud.data,'POST','/v1/app-check/refresh',{})
+                await asyncio.sleep(3)
 
     async def _phone_authenticate(self):
         session=async_get_clientsession(self.hass)
@@ -59,11 +91,11 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
             if self._phone_import_token:
                 await phone_request(session,settings,'POST','/v1/app-check',{'token':self._phone_import_token})
                 self._phone_import_token=None
-            # Fail before asking for a real authorization code when attestation
-            # is unavailable. The same bridge also supplies it during exchange.
-            await fetch_app_check(session,settings)
+            self._phone_phase='checking_app_check'
+            await self._ensure_phone_app_check()
             settings.pop('app_check_token',None)
             authorize_url=self._cloud.begin(force_login=False)
+            self._phone_phase='opening_chrome'
             start_task=asyncio.create_task(phone_request(session,settings,'POST','/v1/oauth/sessions',{'authorize_url':authorize_url}))
             try:
                 result=await asyncio.shield(start_task)
@@ -75,8 +107,13 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
                     session_id=result.get('id') if isinstance(result,dict) else None
                 raise
             session_id=result.get('id') if isinstance(result,dict) else None
-            callback=await wait_phone_callback(session,settings,session_id)
+            callback=await wait_phone_callback(session,settings,session_id,on_phase=lambda phase:setattr(self,'_phone_phase',phase))
+            self._phone_phase='checking_app_check'
+            await self._ensure_phone_app_check(timeout=60)
+            self._phone_phase='exchanging_token'
             await self._cloud.finish(callback)
+            self._token_diagnostic='OAuth token exchange succeeded.'
+            self._phone_phase='discovering_devices'
         except TokenExchangeError as error:
             self._phone_error=error.reason
             self._token_diagnostic=error.diagnostic
@@ -84,6 +121,8 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
             self._phone_error=getattr(error,'reason',None) or str(error)
         except (ClientError,TimeoutError,ValueError,KeyError):self._phone_error='phone_bridge_unavailable'
         finally:
+            if self._phone_error:
+                logging.getLogger(__name__).warning('Phone sign-in stopped during %s (%s)',getattr(self,'_phone_phase','not_started'),self._phone_error)
             self._phone_import_token=None
             if isinstance(session_id,str) and re.fullmatch(r'[A-Za-z0-9_-]{32,128}',session_id):
                 with suppress(AppCheckBridgeError,ClientError,TimeoutError):
@@ -93,7 +132,8 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
         if getattr(self,'_phone_task',None) is None:
             self._phone_task=self.hass.async_create_task(self._phone_authenticate())
         if not self._phone_task.done():
-            return self.async_show_progress(step_id='phone_wait',progress_action='phone_login',progress_task=self._phone_task)
+            return self.async_show_progress(step_id='phone_wait',progress_action='phone_login',progress_task=self._phone_task,
+                description_placeholders={'phone_status':self._phone_status_text()})
         return self.async_show_progress_done(next_step_id='phone_finish')
 
     async def async_step_phone_finish(self,user_input=None):
