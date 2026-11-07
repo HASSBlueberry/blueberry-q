@@ -7,6 +7,7 @@ import hashlib
 import secrets
 import time
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
+import aiohttp
 
 IDENTITY = 'https://partner-identity.myq-cloud.com'
 
@@ -23,6 +24,21 @@ class OAuthCallbackError(ValueError):
 class TokenExchangeError(MyQCloudAuthError):
     def __init__(self,reason):
         super().__init__('Provider token exchange failed');self.reason=reason
+
+class MyQCloudNetworkError(ValueError):
+    """A provider request failed without exposing request or response secrets."""
+    def __init__(self, reason):
+        super().__init__('myQ provider request failed')
+        self.reason = reason
+
+def _network_reason(error, prefix):
+    if isinstance(error, aiohttp.ClientSSLError):
+        return f'{prefix}_tls_error'
+    if isinstance(error, (aiohttp.ServerTimeoutError, asyncio.TimeoutError)):
+        return f'{prefix}_timeout'
+    if isinstance(error, aiohttp.ClientConnectorError):
+        return f'{prefix}_connection_error'
+    return f'{prefix}_network_error'
 
 class MyQCloud:
     IDENTITY=IDENTITY
@@ -70,15 +86,24 @@ class MyQCloud:
                   'redirect_uri': self.data.get('redirect_uri', 'com.myqops://android'), **form}
         if self.data.get('client_secret'):
             fields['client_secret'] = self.data['client_secret']
-        async with self.session.post(IDENTITY + '/connect/token', data=fields, timeout=30) as response:
-            if response.status in (400,401,403):
-                try:error=(await response.json()).get('error')
-                except (ValueError,AttributeError):error=None
-                reason={'invalid_client':'oauth_client_rejected','invalid_grant':'oauth_code_expired',
-                        'access_denied':'oauth_access_denied'}.get(error,'oauth_token_rejected')
-                raise TokenExchangeError(reason)
-            response.raise_for_status()
-            payload = await response.json()
+        try:
+            async with self.session.post(IDENTITY + '/connect/token', data=fields, timeout=30) as response:
+                if response.status == 429:
+                    raise MyQCloudNetworkError('identity_rate_limited')
+                if response.status >= 500:
+                    raise MyQCloudNetworkError('identity_server_error')
+                if response.status in (400,401,403):
+                    try:error=(await response.json()).get('error')
+                    except (ValueError,AttributeError):error=None
+                    reason={'invalid_client':'oauth_client_rejected','invalid_grant':'oauth_code_expired',
+                            'access_denied':'oauth_access_denied'}.get(error,'oauth_token_rejected')
+                    raise TokenExchangeError(reason)
+                response.raise_for_status()
+                payload = await response.json()
+        except (TokenExchangeError, MyQCloudNetworkError):
+            raise
+        except (aiohttp.ClientError, asyncio.TimeoutError) as error:
+            raise MyQCloudNetworkError(_network_reason(error, 'identity')) from None
         if not payload.get('access_token'):
             raise ValueError('Provider did not return an access token')
         self.data.update(access_token=payload['access_token'],
@@ -92,12 +117,21 @@ class MyQCloud:
                     raise MyQCloudAuthError('Sign in to myQ again')
                 await self._token({'grant_type': 'refresh_token', 'refresh_token': self.data['refresh_token']})
             headers = {'Authorization': 'Bearer ' + self.data['access_token'], 'BrandId': '1'}
-            async with self.session.request(method, url, headers=headers, timeout=30) as response:
-                response.raise_for_status()
-                if method == 'PUT':
-                    await response.read()
-                    return None
-                return await response.json()
+            try:
+                async with self.session.request(method, url, headers=headers, timeout=30) as response:
+                    if response.status == 429:
+                        raise MyQCloudNetworkError('device_api_rate_limited')
+                    if response.status >= 500:
+                        raise MyQCloudNetworkError('device_api_server_error')
+                    response.raise_for_status()
+                    if method == 'PUT':
+                        await response.read()
+                        return None
+                    return await response.json()
+            except (MyQCloudNetworkError, aiohttp.ClientResponseError):
+                raise
+            except (aiohttp.ClientError, asyncio.TimeoutError) as error:
+                raise MyQCloudNetworkError(_network_reason(error, 'device_api')) from None
 
     async def devices(self):
         accounts = await self.request('GET', 'https://accounts.myq-cloud.com/api/v6.0/accounts')

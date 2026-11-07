@@ -4,8 +4,8 @@ from homeassistant.helpers import selector
 from homeassistant import config_entries
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from aiohttp import ClientError,ClientResponseError
-from .cloud_api import MyQCloud,MyQCloudAuthError,OAuthCallbackError,TokenExchangeError
-from .login import BrowserRequired,InvalidCredentials,VerificationRequired,VerificationMethodRequired
+from .cloud_api import MyQCloud,MyQCloudAuthError,MyQCloudNetworkError,OAuthCallbackError,TokenExchangeError
+from .login import BrowserRequired,InvalidCredentials,ProviderHTTPError,ProviderNetworkError,VerificationRequired,VerificationMethodRequired
 from .const import DOMAIN
 
 class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
@@ -34,6 +34,15 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
             self._auth_url=self._cloud.begin()
             return await self.async_step_callback(_error='browser_required')
         except TokenExchangeError as error:
+            self._auth_url=self._cloud.begin()
+            return await self.async_step_callback(_error=error.reason)
+        except ProviderNetworkError as error:
+            reason=('verification_'+error.reason) if step=='verification' else error.reason
+            return await self.async_step_login(_error=reason)
+        except ProviderHTTPError as error:
+            reason='identity_rate_limited' if error.status==429 else 'identity_server_error' if error.status>=500 else 'identity_http_error'
+            return await self.async_step_login(_error=('verification_'+reason) if step=='verification' else reason)
+        except MyQCloudNetworkError as error:
             self._auth_url=self._cloud.begin()
             return await self.async_step_callback(_error=error.reason)
         except (ClientError,TimeoutError):
@@ -95,7 +104,8 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
                 try:await self._cloud.finish(user_input.get('callback_url',''))
                 except OAuthCallbackError as error:errors['base']=error.reason
                 except TokenExchangeError as error:errors['base']=error.reason
-                except (ClientError,TimeoutError):errors['base']='cannot_connect'
+                except MyQCloudNetworkError as error:errors['base']=error.reason
+                except (ClientError,TimeoutError):errors['base']='identity_network_error'
                 except (ValueError,KeyError):errors['base']='cloud_auth_failed'
                 else:return await self.async_step_discover()
         return self.async_show_form(step_id='callback',data_schema=vol.Schema({
@@ -106,6 +116,7 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
         errors={}
         try:devices=await self._cloud.devices()
         except MyQCloudAuthError:errors['base']='account_auth_failed'
+        except MyQCloudNetworkError as error:errors['base']=error.reason
         except ClientResponseError as error:errors['base']='account_access_denied' if error.status in (401,403) else 'discovery_failed'
         except (ClientError,TimeoutError,ValueError,KeyError):errors['base']='discovery_failed'
         else:

@@ -104,6 +104,8 @@ email/password flow sends it once to the provider login form and does not
 persist it. OAuth tokens and
 an optional client secret are stored in HA config entry storage.
 
+Setup reports identity connection, TLS, timeout, rate limit, server, and HTTP rejection failures separately. If password sign-in is blocked by a provider challenge, select browser sign-in. Once authorization completes, discovery reports device API connectivity and authorization failures separately. These messages intentionally omit callback values and provider response bodies.
+
 The application API is undocumented and this integration is not endorsed by
 MyQ. Some clients require a secret, and the provider can refuse third-party
 traffic. A failed sign-in, provider block, or empty supported device list does

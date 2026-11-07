@@ -9,6 +9,12 @@ class BrowserRequired(ValueError):
 class InvalidCredentials(ValueError):
     pass
 
+class ProviderNetworkError(ValueError):
+    def __init__(self,reason):super().__init__('myQ identity request failed');self.reason=reason
+
+class ProviderHTTPError(ValueError):
+    def __init__(self,status):super().__init__('myQ identity endpoint returned an HTTP error');self.status=status
+
 class VerificationRequired(ValueError):
     def __init__(self,invalid=False):
         super().__init__('Enter the verification code requested by myQ')
@@ -98,15 +104,22 @@ class ProviderLogin:
             if (parsed.scheme,parsed.netloc,parsed.path)==(expected.scheme,expected.netloc,expected.path):
                 await self.cloud.finish(self.url);return
             self.destination(self.url)
-            async with self.session.request(self.method,self.url,data=self.fields,allow_redirects=False) as response:
-                # Never keep a password or OTP body across prompts or redirects.
-                self.fields=None
-                if response.status in (301,302,303,307,308):
-                    location=response.headers.get('Location')
-                    if not location:raise BrowserRequired('Missing provider redirect')
-                    self.url=urljoin(self.url,location);self.method='GET';continue
-                if response.status not in (400,401):response.raise_for_status()
-                page=await response.text()
+            try:
+                request=self.session.request(self.method,self.url,data=self.fields,allow_redirects=False)
+                async with request as response:
+                    # Never keep a password or OTP body across prompts or redirects.
+                    self.fields=None
+                    if response.status in (301,302,303,307,308):
+                        location=response.headers.get('Location')
+                        if not location:raise BrowserRequired('Missing provider redirect')
+                        self.url=urljoin(self.url,location);self.method='GET';continue
+                    if response.status==429 or response.status>=500:raise ProviderHTTPError(response.status)
+                    page=await response.text()
+            except aiohttp.ClientSSLError:raise ProviderNetworkError('identity_tls_error') from None
+            except aiohttp.ServerTimeoutError:raise ProviderNetworkError('identity_timeout') from None
+            except aiohttp.ClientConnectorError:raise ProviderNetworkError('identity_connection_error') from None
+            except aiohttp.ClientError:raise ProviderNetworkError('identity_network_error') from None
+            except TimeoutError:raise ProviderNetworkError('identity_timeout') from None
             parser=ProviderForms();parser.feed(page)
             for form in parser.forms:
                 name=code_field(form)
@@ -126,5 +139,6 @@ class ProviderLogin:
                 self.prepare(form,{user:self.username,password:self.password});self.submitted=True
                 self.password=None;self.username=None
                 continue
+            if response.status>=400:raise ProviderHTTPError(response.status)
             raise BrowserRequired('Provider requires browser verification')
         raise BrowserRequired('Too many provider redirects')
