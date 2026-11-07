@@ -91,10 +91,13 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
         bundled=next(iter(sorted(Path(__file__).resolve().parents[2].glob('*.apks'))),None)
         if not Path(default_app).is_file() and bundled:default_app=str(bundled)
         if user_input is not None:
+            default_app=str(user_input.get('app_archive') or default_app).strip()
+            if default_app.startswith('/root/config/'):
+                default_app=self.hass.config.path(default_app[len('/root/config/'):])
             try:
-                settings=await self.hass.async_add_executor_job(load_app_material,user_input.get('app_archive') or default_app)
-            except AppArchiveError:
-                errors['base']='app_archive_invalid'
+                settings=await self.hass.async_add_executor_job(load_app_material,default_app)
+            except AppArchiveError as error:
+                errors['base']=error.reason
             else:
                 if getattr(self,'_cloud',None):await self._cloud.close_login()
                 self._cloud=MyQCloud(async_get_clientsession(self.hass),settings)

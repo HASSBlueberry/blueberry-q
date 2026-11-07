@@ -11,33 +11,41 @@ MAX_CONFIG = 1024 * 1024
 
 class AppArchiveError(ValueError):
     """An archive does not contain supported production configuration."""
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
 
 def load_app_material(path):
     path = Path(path).expanduser()
-    if not path.is_file() or path.stat().st_size > MAX_ARCHIVE:
-        raise AppArchiveError('App archive is missing or too large')
+    try:
+        if not path.is_file():
+            raise AppArchiveError('app_archive_missing')
+        if path.stat().st_size > MAX_ARCHIVE:
+            raise AppArchiveError('app_archive_large')
+    except OSError:
+        raise AppArchiveError('app_archive_unreadable') from None
     def inspect(archive):
         try:
             member = archive.getinfo('assets/myq-config.json')
         except KeyError:
             return None
         if member.file_size > MAX_CONFIG:
-            raise AppArchiveError('App configuration is too large')
+            raise AppArchiveError('app_config_large')
         config = json.loads(archive.read(member))
         rows = [row for row in config['environmentProviders'] if row.get('identifier') == 'Production']
         if len(rows) != 1:
-            raise AppArchiveError('Production environment is missing or ambiguous')
+            raise AppArchiveError('app_production_missing')
         credentials = rows[0]['credentialsProvider']
         fields = {'client_id': credentials['clientId'], 'redirect_uri': credentials['redirectURI'], 'scope': credentials['scope']}
         if not all(isinstance(value, str) and value.strip() for value in fields.values()):
-            raise AppArchiveError('Invalid OAuth configuration')
+            raise AppArchiveError('app_config_invalid')
         redirect = urlsplit(fields['redirect_uri'])
         if redirect.scheme != 'com.myqops' or redirect.netloc != 'android' or redirect.path or redirect.query or redirect.fragment:
-            raise AppArchiveError('Unsupported app callback')
+            raise AppArchiveError('app_callback_unsupported')
         secret = credentials.get('clientSecret') or credentials.get('client_secret')
         if secret:
             if not isinstance(secret, str):
-                raise AppArchiveError('Invalid OAuth credential')
+                raise AppArchiveError('app_config_invalid')
             fields['client_secret'] = secret
         return fields
     try:
@@ -45,13 +53,23 @@ def load_app_material(path):
             result = inspect(archive)
             if result:
                 return result
-            bases = [item for item in archive.infolist() if item.filename.rsplit('/', 1)[-1] == 'base.apk']
-            if len(bases) != 1 or bases[0].file_size > MAX_APK:
-                raise AppArchiveError('Expected one base APK')
-            with zipfile.ZipFile(io.BytesIO(archive.read(bases[0]))) as base:
-                result = inspect(base)
-                if result:
-                    return result
-    except (OSError, KeyError, TypeError, ValueError, zipfile.BadZipFile) as error:
-        raise AppArchiveError('Cannot read supported MyQ app configuration') from None
-    raise AppArchiveError('MyQ app configuration was not found')
+            members = [item for item in archive.infolist() if item.filename.lower().endswith('.apk')]
+            if len(members) > 32:
+                raise AppArchiveError('app_archive_layout')
+            members.sort(key=lambda item: (item.filename.rsplit('/', 1)[-1] != 'base.apk', item.filename))
+            for member in members:
+                if member.file_size > MAX_APK:
+                    raise AppArchiveError('app_archive_large')
+                with zipfile.ZipFile(io.BytesIO(archive.read(member))) as base:
+                    result = inspect(base)
+                    if result:
+                        return result
+    except AppArchiveError:
+        raise
+    except OSError:
+        raise AppArchiveError('app_archive_unreadable') from None
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise AppArchiveError('app_config_invalid') from None
+    except (zipfile.BadZipFile, RuntimeError, NotImplementedError):
+        raise AppArchiveError('app_archive_corrupt') from None
+    raise AppArchiveError('app_config_missing')

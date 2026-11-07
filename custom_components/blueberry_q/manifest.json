@@ -10,7 +10,7 @@
   "integration_type": "device",
   "iot_class": "cloud_polling",
   "requirements": [],
-  "version": "0.4.3",
+  "version": "0.4.4",
   "after_dependencies": [
     "mqtt"
   ],

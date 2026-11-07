@@ -105,7 +105,17 @@
       "device_api_rate_limited": "Sign-in succeeded, but myQ is limiting device API requests. Wait before retrying discovery.",
       "device_api_server_error": "Sign-in succeeded, but myQ device services returned a server error. Retry discovery later.",
       "oauth_application_unauthorized": "myQ rejected this application at the token endpoint (401.122). Browser sign-in and OTP can succeed while application access is denied. Repeating sign-in will not resolve this application authorization error. An authorized OAuth client configuration is required.",
-      "app_archive_invalid": "Could not read production OAuth configuration from this app archive. Check the path and use a compatible myQ APK or APKS."
+      "app_archive_invalid": "Could not read production OAuth configuration from this app archive. Check the path and use a compatible myQ APK or APKS.",
+      "app_archive_missing": "Home Assistant Core cannot find this file. Use /config/.storage/blueberry_q/myq.apks for the shared configuration folder. A file visible in the terminal app must also be visible to Core.",
+      "app_archive_unreadable": "Home Assistant Core cannot read this archive. Check file permissions and the shared configuration mount.",
+      "app_archive_large": "The archive or an APK inside it exceeds the supported size limit.",
+      "app_config_large": "The OAuth configuration inside the archive exceeds the supported size limit.",
+      "app_production_missing": "The app configuration does not contain exactly one Production environment.",
+      "app_config_invalid": "The app contains malformed or unsupported OAuth configuration.",
+      "app_callback_unsupported": "The app configuration uses an unsupported OAuth callback URI.",
+      "app_archive_layout": "The archive contains too many nested APK files.",
+      "app_archive_corrupt": "The file is not a readable APK/APKS ZIP archive, is damaged, or uses unsupported encryption or compression.",
+      "app_config_missing": "No assets/myq-config.json was found in this archive or its APK files. Check that this is the complete Android myQ application."
     },
     "abort": {
       "wrong_account": "Sign in to the same account as this integration entry.",
