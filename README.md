@@ -1,3 +1,13 @@
+> [!CAUTION]
+> MyQ can block this method entirely with one update that enforces Firebase App Check.
+> This is the last bastion of local control for MyQ Security 2.0 openers or
+> hubs, made in hopes
+> to convince them that I don't aim to back off or "abuse" or "compromise"
+> their service (code-word for "we want to keep our proprietary control of the devices
+> you own"). If they enforce App Check, this integration will stop working when
+> they (or you) rotate your keys. MyQ/Chamberlain Group is untrustable
+> and unpredictable. Don't expect this to function in a year's time.
+
 # BlueberryQ local control research
 
 This directory is the MyQ Security 2.0 local-control implementation boundary.
@@ -118,3 +128,11 @@ This implementation has not been exercised against a live account. Earlier
 research notes above describe the independent MQTT path and do not describe
 the cloud adapter. Public app client identifiers are defaults, not a claim
 that the provider accepts public-client token exchange without a secret.
+
+The token endpoint can return a proprietary JSON rejection with code `401.122` and description `The application is unauthorized`, rather than an OAuth `error` field. Version 0.4.2 identifies this application rejection explicitly. A diagnostic request with an invalid code reproduced it, without using account credentials. Browser login success does not establish that the token endpoint authorizes this client. Live account token exchange remains unverified.
+
+## Application configuration extraction
+
+Version 0.4.3 reads `assets/myq-config.json` from a local APK or the base APK inside an APKS archive during browser setup. Put the downloaded archive at `/config/.storage/blueberry_q/myq.apks` or enter its path. Extraction runs in HA's executor, uses bounded archive reads, selects the exact Production environment, and reads client ID, redirect URI, scope and a client secret only if the credentials provider contains one. It does not execute application code or log the extracted settings. The archive is not bundled into the integration package.
+
+The downloaded 5.323.0.1132341 archive contains client ID, redirect URI and scope but no secret in its production credentials provider. Inspection of classes3.dex and classes6.dex found the token interface in `po0/s.java`, which includes a `/connect/token` method accepting `Firebase-AppCheck-Token`. Other overloads omit this header, so this observation alone does not establish which path caused a particular rejection. Runtime attestation is not a static application secret. No valid attestation or successful account token exchange has been recovered. Extraction currently reproduces the app's published OAuth configuration and does not establish that error 401.122 is resolved.

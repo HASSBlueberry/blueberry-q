@@ -56,7 +56,7 @@ class MyQCloud:
         return IDENTITY + '/connect/authorize?' + urlencode({
             'client_id': self.data.get('client_id', 'ANDROID_CGI_MYQ'),
             'redirect_uri': self.data.get('redirect_uri', 'com.myqops://android'),
-            'response_type': 'code', 'scope': 'MyQ_Residential offline_access',
+            'response_type': 'code', 'scope': self.data.get('scope', 'MyQ_Residential offline_access'),
             'code_challenge': challenge, 'code_challenge_method': 'S256',
             'state': self.state, 'prompt': 'login', 'acr_values': 'unified_flow:v1 brand:myq',
         })
@@ -93,8 +93,14 @@ class MyQCloud:
                 if response.status >= 500:
                     raise MyQCloudNetworkError('identity_server_error')
                 if response.status in (400,401,403):
-                    try:error=(await response.json()).get('error')
-                    except (ValueError,AttributeError):error=None
+                    try:
+                        rejection=await response.json()
+                        error=rejection.get('error')
+                        provider_code=rejection.get('code')
+                    except (ValueError,AttributeError):
+                        error=None;provider_code=None
+                    if provider_code=='401.122':
+                        raise TokenExchangeError('oauth_application_unauthorized')
                     reason={'invalid_client':'oauth_client_rejected','invalid_grant':'oauth_code_expired',
                             'access_denied':'oauth_access_denied'}.get(error,'oauth_token_rejected')
                     raise TokenExchangeError(reason)
@@ -102,6 +108,8 @@ class MyQCloud:
                 payload = await response.json()
         except (TokenExchangeError, MyQCloudNetworkError):
             raise
+        except aiohttp.ClientResponseError:
+            raise MyQCloudNetworkError('identity_http_error') from None
         except (aiohttp.ClientError, asyncio.TimeoutError) as error:
             raise MyQCloudNetworkError(_network_reason(error, 'identity')) from None
         if not payload.get('access_token'):

@@ -17,12 +17,10 @@
         }
       },
       "cloud": {
-        "title": "myQ application OAuth",
-        "description": "Experimental app API access. The provider may require a client secret for this client ID. Enter credentials belonging to an OAuth client you can use. Sign in with your username/password on the provider page in the next step.",
+        "title": "Read myQ application configuration",
+        "description": "Select the pre-downloaded myQ APK or APKS on the Home Assistant filesystem. Setup reads production OAuth settings locally without executing the app. A runtime attestation token, if required by myQ, cannot be extracted from a static archive.",
         "data": {
-          "client_id": "OAuth client ID",
-          "client_secret": "OAuth client secret, if required",
-          "redirect_uri": "Registered callback URI"
+          "app_archive": "myQ APK or APKS path"
         }
       },
       "callback": {
@@ -105,7 +103,9 @@
       "device_api_timeout": "Sign-in succeeded, but myQ device services timed out. Retry discovery shortly.",
       "device_api_network_error": "Sign-in succeeded, but the network request to myQ device services failed. Check connectivity and retry discovery.",
       "device_api_rate_limited": "Sign-in succeeded, but myQ is limiting device API requests. Wait before retrying discovery.",
-      "device_api_server_error": "Sign-in succeeded, but myQ device services returned a server error. Retry discovery later."
+      "device_api_server_error": "Sign-in succeeded, but myQ device services returned a server error. Retry discovery later.",
+      "oauth_application_unauthorized": "myQ rejected this application at the token endpoint (401.122). Browser sign-in and OTP can succeed while application access is denied. Repeating sign-in will not resolve this application authorization error. An authorized OAuth client configuration is required.",
+      "app_archive_invalid": "Could not read production OAuth configuration from this app archive. Check the path and use a compatible myQ APK or APKS."
     },
     "abort": {
       "wrong_account": "Sign in to the same account as this integration entry.",

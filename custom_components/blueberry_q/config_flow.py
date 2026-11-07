@@ -1,4 +1,6 @@
 import asyncio
+from pathlib import Path
+from .app_archive import load_app_material, AppArchiveError
 import voluptuous as vol
 from homeassistant.helpers import selector
 from homeassistant import config_entries
@@ -15,11 +17,10 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
         if getattr(self,'_cloud',None):asyncio.create_task(self._cloud.close_login())
 
     async def async_step_user(self,user_input=None):
-        if not self.show_advanced_options:return await self.async_step_login(user_input)
         if user_input:
             return await {'cloud':self.async_step_cloud,'password':self.async_step_login,'mqtt':self.async_step_mqtt}[user_input['mode']]()
         return self.async_show_form(step_id='user',data_schema=vol.Schema({
-            vol.Required('mode',default='password'):vol.In({'password':'myQ email and password','cloud':'Provider browser sign-in, including Amazon when offered','mqtt':'Existing MQTT relay'})}))
+            vol.Required('mode',default='cloud'):vol.In({'password':'myQ email and password','cloud':'Provider browser sign-in, including Amazon when offered','mqtt':'Existing MQTT relay'})}))
 
     async def _auth_operation(self,operation,step):
         try:await operation()
@@ -52,9 +53,9 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
 
     def _client_settings(self,values=None):
         previous=getattr(self,'_reauth_entry',None)
-        settings={key:value for key,value in (previous.data.items() if previous else []) if key in ('client_id','redirect_uri','client_secret')}
+        settings={key:value for key,value in (previous.data.items() if previous else []) if key in ('client_id','redirect_uri','client_secret','scope')}
         for key,value in (values or {}).items():
-            if key in ('client_id','redirect_uri','client_secret') and value:settings[key]=value
+            if key in ('client_id','redirect_uri','client_secret','scope') and value:settings[key]=value
         return settings
 
     async def async_step_login(self,user_input=None,_error=None):
@@ -68,7 +69,7 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
             if not user_input.get('username') or not user_input.get('password'):errors['base']='missing_credentials'
             else:return await self._auth_operation(lambda:self._cloud.login_password(user_input['username'],user_input['password']),'login')
         fields={vol.Optional('username'):str,vol.Optional('password'):selector.TextSelector({'type':'password'}),vol.Optional('use_browser',default=False):bool}
-        if self.show_advanced_options:fields[vol.Optional('client_secret',default='')]=selector.TextSelector({'type':'password'})
+        fields[vol.Optional('client_secret',default='')]=selector.TextSelector({'type':'password'})
         return self.async_show_form(step_id='login',data_schema=vol.Schema(fields),errors=errors)
 
     async def async_step_verification(self,user_input=None,_error=None):
@@ -85,15 +86,22 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
         return await self.async_step_login()
 
     async def async_step_cloud(self,user_input=None):
-        if user_input or not self.show_advanced_options:
-            if getattr(self,'_cloud',None):await self._cloud.close_login()
-            self._cloud=MyQCloud(async_get_clientsession(self.hass),self._client_settings(user_input))
-            self._auth_url=self._cloud.begin()
-            return await self.async_step_callback()
+        errors={}
+        default_app=self.hass.config.path('.storage',DOMAIN,'myq.apks')
+        bundled=next(iter(sorted(Path(__file__).resolve().parents[2].glob('*.apks'))),None)
+        if not Path(default_app).is_file() and bundled:default_app=str(bundled)
+        if user_input is not None:
+            try:
+                settings=await self.hass.async_add_executor_job(load_app_material,user_input.get('app_archive') or default_app)
+            except AppArchiveError:
+                errors['base']='app_archive_invalid'
+            else:
+                if getattr(self,'_cloud',None):await self._cloud.close_login()
+                self._cloud=MyQCloud(async_get_clientsession(self.hass),settings)
+                self._auth_url=self._cloud.begin()
+                return await self.async_step_callback()
         return self.async_show_form(step_id='cloud',data_schema=vol.Schema({
-            vol.Required('client_id',default='ANDROID_CGI_MYQ'):str,
-            vol.Required('redirect_uri',default='com.myqops://android'):str,
-            vol.Optional('client_secret',default=''):selector.TextSelector({'type':'password'})}))
+            vol.Required('app_archive',default=default_app):str}),errors=errors)
 
     async def async_step_callback(self,user_input=None,_error=None):
         errors={'base':_error} if _error else {}
