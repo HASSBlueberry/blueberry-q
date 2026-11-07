@@ -17,7 +17,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    if entry.data.get('mode') == 'cloud':
+    if entry.data.get('mode') in ('cloud','native'):
         store = hass.data[DOMAIN][entry.entry_id]
         seen = set()
         def discover():
@@ -122,7 +122,7 @@ class MyQCloudCover(CoordinatorEntity, CoverEntity):
         super().__init__(coordinator)
         self.api = api
         self.key = key
-        self._attr_unique_id = 'myq_cloud_' + key
+        self._attr_unique_id = ('myq_native_' if api.data.get('mode')=='native' else 'myq_cloud_') + key
         self._attr_name = coordinator.data[key].get('name', 'Garage door')
 
     @property
@@ -149,12 +149,14 @@ class MyQCloudCover(CoordinatorEntity, CoverEntity):
     @property
     def device_info(self):
         return DeviceInfo(identifiers={(DOMAIN, self.key)}, name=self._attr_name,
-                          manufacturer='Chamberlain Group', model='myQ cloud opener')
+                          manufacturer='Chamberlain Group', model='MyQ native phone controller' if self.api.data.get('mode')=='native' else 'myQ cloud opener')
 
     async def _command(self, action):
         try:
             await self.api.command(self.device, action)
         except (ValueError, TimeoutError, ClientError) as err:
+            if self.api.data.get('mode')=='native':
+                raise HomeAssistantError('MyQ phone controller could not complete the action. '+getattr(err,'reason','Check the phone screen.')) from err
             raise HomeAssistantError('myQ provider rejected the door command') from err
         await self.coordinator.async_request_refresh()
 

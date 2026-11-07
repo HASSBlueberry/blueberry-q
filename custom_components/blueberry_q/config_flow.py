@@ -14,6 +14,7 @@ from .cloud_api import MyQCloud,MyQCloudAuthError,MyQCloudNetworkError,OAuthCall
 from .login import BrowserRequired,InvalidCredentials,ProviderHTTPError,ProviderNetworkError,VerificationRequired,VerificationMethodRequired
 from .const import DOMAIN
 from .app_check import bridge_url, AppCheckBridgeError, prepare_manual_token, phone_request, wait_phone_callback
+from .native_api import NativeMyQ
 
 AUTH_SETTINGS=('client_id','redirect_uri','client_secret','scope','app_check_token','app_bridge_url','app_bridge_key','app_bridge_id')
 
@@ -26,9 +27,40 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
 
     async def async_step_user(self,user_input=None):
         if user_input:
-            return await {'phone':self.async_step_phone_login,'cloud':self.async_step_cloud,'password':self.async_step_login,'credentials':self.async_step_credentials,'mqtt':self.async_step_mqtt}[user_input['mode']]()
+            return await {'native':self.async_step_native,'phone':self.async_step_phone_login,'cloud':self.async_step_cloud,'password':self.async_step_login,'credentials':self.async_step_credentials,'mqtt':self.async_step_mqtt}[user_input['mode']]()
         return self.async_show_form(step_id='user',data_schema=vol.Schema({
-            vol.Required('mode',default='phone' if getattr(self,'_setup_settings',{}).get('app_bridge_url') else 'cloud'):vol.In({'phone':'Sign in on connected phone with BlueberryQDB','password':'myQ email and password','cloud':'Provider browser sign-in, including Amazon when offered','credentials':'Existing OAuth credentials or BlueberryQDB migration','mqtt':'Existing MQTT relay'})}))
+            vol.Required('mode',default='native'):vol.In({'native':'Use the signed-in MyQ app through BlueberryQDB','phone':'Separate cloud login through Chrome','password':'myQ email and password','cloud':'Provider browser sign-in, including Amazon when offered','credentials':'Existing OAuth credentials or BlueberryQDB migration','mqtt':'Existing MQTT relay'})}))
+
+    async def async_step_native(self,user_input=None):
+        errors={}
+        if not getattr(self,'_setup_settings',None) and not getattr(self,'_reauth_entry',None) and not getattr(self,'_reconfigure_entry',None):
+            entries=self._async_current_entries()
+            connected=[e for e in entries if e.data.get('app_bridge_url')]
+            if len(connected)==1:
+                self._setup_settings={k:v for k,v in connected[0].data.items() if k in ('app_bridge_url','app_bridge_key','app_bridge_id')}
+        if user_input is not None:
+            try:
+                settings=self._client_settings(user_input)
+                client=NativeMyQ(async_get_clientsession(self.hass),{'mode':'native',**settings})
+                devices=await client.devices()
+                if not devices or not any(d.get('state',{}).get('online') for d in devices.values()):
+                    raise MyQCloudNetworkError('native_state_unknown')
+                await self.async_set_unique_id('native:'+client.data['app_bridge_id'])
+                previous=getattr(self,'_reauth_entry',None) or getattr(self,'_reconfigure_entry',None)
+                if previous:
+                    if previous.unique_id!=self.unique_id:return self.async_abort(reason='wrong_account')
+                    self.hass.config_entries.async_update_entry(previous,data={'mode':'native',**client.data})
+                    await self.hass.config_entries.async_reload(previous.entry_id)
+                    return self.async_abort(reason='reauth_successful' if getattr(self,'_reauth_entry',None) else 'reconfigure_successful')
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(title='MyQ phone controller',data={'mode':'native',**client.data})
+            except MyQCloudAuthError:errors['base']='native_sign_in_required'
+            except MyQCloudNetworkError as error:errors['base']=error.reason
+            except AppCheckBridgeError as error:errors['base']=str(error)
+        defaults=self._client_settings()
+        return self.async_show_form(step_id='native',data_schema=vol.Schema({
+            vol.Required('app_bridge_url',default=defaults.get('app_bridge_url','')):str,
+            vol.Optional('app_bridge_key'):selector.TextSelector({'type':'password'})}),errors=errors)
 
     async def async_step_phone_login(self,user_input=None,_error=None):
         errors={'base':_error} if _error else {}
@@ -209,6 +241,7 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
 
     async def async_step_reconfigure(self,user_input=None):
         self._reconfigure_entry=self.hass.config_entries.async_get_entry(self.context['entry_id'])
+        if self._reconfigure_entry.data.get('mode')=='native':return await self.async_step_native(user_input)
         if self._reconfigure_entry.data.get('mode')!='cloud':return self.async_abort(reason='cloud_only')
         return await self.async_step_credentials(user_input)
 
@@ -274,6 +307,7 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
 
     async def async_step_reauth(self,entry_data):
         self._reauth_entry=self.hass.config_entries.async_get_entry(self.context['entry_id'])
+        if self._reauth_entry.data.get('mode')=='native':return await self.async_step_native()
         if self._reauth_entry.data.get('app_bridge_url'):return await self.async_step_phone_login()
         return await self.async_step_login()
 

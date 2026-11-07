@@ -7,6 +7,7 @@ from aiohttp import ClientResponseError, ClientError
 from datetime import timedelta
 import logging
 from .cloud_api import MyQCloud, MyQCloudAuthError
+from .native_api import NativeMyQ
 
 from .const import DOMAIN
 
@@ -28,8 +29,9 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store = {}
-    if entry.data.get('mode') == 'cloud':
-        client = MyQCloud(async_get_clientsession(hass), entry.data)
+    if entry.data.get('mode') in ('cloud','native'):
+        native=entry.data.get('mode')=='native'
+        client = (NativeMyQ if native else MyQCloud)(async_get_clientsession(hass), entry.data)
         async def update():
             try:
                 result = await client.devices()
@@ -47,8 +49,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 # discovery fails. Persist rotation even on that failure.
                 if client.data != dict(entry.data):
                     hass.config_entries.async_update_entry(entry, data=client.data)
-        coordinator = DataUpdateCoordinator(hass, logging.getLogger(__name__), name='myQ cloud',
-                                            update_method=update, update_interval=timedelta(seconds=60))
+        coordinator = DataUpdateCoordinator(hass, logging.getLogger(__name__), name='myQ phone controller' if native else 'myQ cloud',
+                                            update_method=update, update_interval=timedelta(seconds=15 if native else 60))
         await coordinator.async_config_entry_first_refresh()
         store = {'api': client, 'coordinator': coordinator}
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = store

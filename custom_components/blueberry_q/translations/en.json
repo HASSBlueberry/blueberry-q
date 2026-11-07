@@ -100,6 +100,14 @@
       },
       "phone_wait": {
         "title": "Complete sign-in on your phone"
+      },
+      "native": {
+        "title": "Check the signed-in MyQ app connection",
+        "description": "Sign in only inside the official MyQ app on your phone. In the BlueberryQDB panel, use Check connection now, select the actual door control, and save it. Then submit this form to verify the connection immediately. No Chrome login, App Check or OAuth token is needed. Leave the key blank to retain a discovered or saved connection key. Keep the phone unlocked with the door list visible.",
+        "data": {
+          "app_bridge_url": "BlueberryQDB URL",
+          "app_bridge_key": "BlueberryQDB connection key"
+        }
       }
     },
     "error": {
@@ -185,7 +193,21 @@
       "phone_no_permissions": "BlueberryQDB cannot access the USB phone. Check the app USB settings.",
       "select_one_phone": "Select one phone in BlueberryQDB before signing in.",
       "invalid_app_check_token": "The optional App Check token could not be imported.",
-      "app_bridge_unauthorized": "BlueberryQDB rejected the connection key. Use the current key from its panel or Supervisor discovery."
+      "app_bridge_unauthorized": "BlueberryQDB rejected the connection key. Use the current key from its panel or Supervisor discovery.",
+      "native_calibration_required": "Open the BlueberryQDB panel, check the MyQ screen and save the selected door control first.",
+      "native_phone_locked": "Unlock the phone and keep MyQ visible, then check again.",
+      "native_open_myq": "Open the official MyQ app on the phone and show its door list.",
+      "native_door_not_unique": "Enter the exact, unique door name shown in the app and recalibrate it in BlueberryQDB.",
+      "native_state_unknown": "The selected door must have a clear reported Open or Closed state. Check the MyQ screen and calibration.",
+      "native_screen_unreadable": "The phone screen could not be inspected. Unlock it and open MyQ.",
+      "native_control_changed": "The calibrated control changed. Check and save it again in BlueberryQDB.",
+      "native_phone_changed": "Select the phone used when calibrating this door.",
+      "native_sign_in_required": "Sign in inside the official MyQ app on the phone, then submit this connection check again.",
+      "native_bridge_unavailable": "Cannot reach the native phone controller. Install BlueberryQDB 0.3.0 or later and check its connection settings.",
+      "native_confirmation_required": "MyQ is showing a confirmation dialog. Complete or dismiss it on the phone; this controller does not guess confirmation buttons.",
+      "native_screen_obstructed": "Another Android window is covering MyQ. Dismiss it and check again.",
+      "native_controller_busy": "The phone inspection took too long or another command is in progress. Check the screen before retrying.",
+      "native_app_offline": "MyQ reports an offline connection. Restore the app connection before sending a command."
     },
     "abort": {
       "wrong_account": "Sign in to the same account as this integration entry.",

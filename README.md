@@ -1,3 +1,26 @@
+# Blueberry MyQ 0.7.0
+
+Native phone mode uses the already signed-in official MyQ app through
+BlueberryQDB 0.3.0. It needs no separate Chrome login, OAuth token, App Check
+or client secret. In the QDB panel, select the phone, show the MyQ door list,
+press Check connection now and save the actual door control. In HASS, choose
+Use the signed-in MyQ app through BlueberryQDB and submit its connection form.
+There is no timed OAuth step in this mode.
+
+Keep the phone unlocked and MyQ visible. Commands are guarded by fresh UI
+state and a calibrated semantic selector. They are not blind toggles. Unknown
+states, confirmations, moving doors and changed controls are refused. HASS
+reports what the app displays rather than assuming a gesture moved the door.
+The tested calibration and gesture flows use synthetic screens. Physical door
+operation and the current UI on the HASS-connected phone remain unverified.
+
+Native and cloud entries are separate. After verifying native mode, disable
+the old cloud entry to avoid duplicate opener controls. If the phone needs a
+new sign-in, do it inside MyQ, then check the native connection again.
+
+The previous cloud OAuth, App Check, and independent MQTT research remains
+below for those paths.
+
 > [!CAUTION]
 > MyQ can block this method entirely with one update that enforces Firebase App Check.
 > This is the last bastion of local control for MyQ Security 2.0 openers or
