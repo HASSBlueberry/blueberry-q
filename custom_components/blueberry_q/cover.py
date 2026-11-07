@@ -21,7 +21,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
         store = hass.data[DOMAIN][entry.entry_id]
         seen = set()
         def discover():
-            keys = set(store['coordinator'].data) - seen
+            keys = {key for key,device in store['coordinator'].data.items()
+                    if device.get('device_family')=='garagedoor' or device.get('native_binding_id')} - seen
             seen.update(keys)
             if keys:
                 async_add_entities([MyQCloudCover(store['coordinator'], store['api'], key) for key in keys])
@@ -147,6 +148,11 @@ class MyQCloudCover(CoordinatorEntity, CoverEntity):
         return self.device.get('state', {}).get('door_state') == 'closing'
 
     @property
+    def extra_state_attributes(self):
+        state=self.device.get('state',{})
+        return {key:state[key] for key in ('last_update','last_status','sensor_comm_error','dps_no_communication') if key in state}
+
+    @property
     def device_info(self):
         return DeviceInfo(identifiers={(DOMAIN, self.key)}, name=self._attr_name,
                           manufacturer='Chamberlain Group', model='MyQ native phone controller' if self.api.data.get('mode')=='native' else 'myQ cloud opener')
@@ -159,6 +165,8 @@ class MyQCloudCover(CoordinatorEntity, CoverEntity):
                 raise HomeAssistantError('MyQ phone controller could not complete the action. '+getattr(err,'reason','Check the phone screen.')) from err
             raise HomeAssistantError('myQ provider rejected the door command') from err
         await self.coordinator.async_request_refresh()
+        follow=getattr(self.coordinator,'async_follow_command',None)
+        if follow:follow()
 
     async def async_open_cover(self, **kwargs):
         await self._command('open')

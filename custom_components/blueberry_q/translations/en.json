@@ -73,7 +73,7 @@
       },
       "credentials": {
         "title": "Use existing myQ credentials",
-        "description": "Enter a refresh token, or an access token and its Unix expiry time. You can copy these fields from your private runtime-auth JSON. Refresh tokens are verified before saving. Connect BlueberryQDB for automatic App Check extraction, or paste an App Check token. During reconfiguration, blank fields retain saved values. A bridge URL takes priority over a pasted App Check token. These credentials are stored in Home Assistant config entry storage.",
+        "description": "OAuth and App Check are required. Access and refresh tokens are stored in Home Assistant and renewed OAuth tokens are saved automatically. Blank fields retain saved values. Connect BlueberryQDB to sync App Check automatically. Diagnostic sensors show expiry and sync times without exposing secrets.",
         "data": {
           "access_token": "OAuth access token",
           "refresh_token": "OAuth refresh token",
@@ -207,7 +207,8 @@
       "native_confirmation_required": "MyQ is showing a confirmation dialog. Complete or dismiss it on the phone; this controller does not guess confirmation buttons.",
       "native_screen_obstructed": "Another Android window is covering MyQ. Dismiss it and check again.",
       "native_controller_busy": "The phone inspection took too long or another command is in progress. Check the screen before retrying.",
-      "native_app_offline": "MyQ reports an offline connection. Restore the app connection before sending a command."
+      "native_app_offline": "MyQ reports an offline connection. Restore the app connection before sending a command.",
+      "app_check_required": "Configure BlueberryQDB or provide an App Check token with OAuth credentials."
     },
     "abort": {
       "wrong_account": "Sign in to the same account as this integration entry.",

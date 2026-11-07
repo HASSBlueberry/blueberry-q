@@ -27,9 +27,12 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
 
     async def async_step_user(self,user_input=None):
         if user_input:
-            return await {'native':self.async_step_native,'phone':self.async_step_phone_login,'cloud':self.async_step_cloud,'password':self.async_step_login,'credentials':self.async_step_credentials,'mqtt':self.async_step_mqtt}[user_input['mode']]()
+            if user_input.get('mode')=='phone':return await self.async_step_phone_login()
+            return await self.async_step_credentials()
         return self.async_show_form(step_id='user',data_schema=vol.Schema({
-            vol.Required('mode',default='native'):vol.In({'native':'Use the signed-in MyQ app through BlueberryQDB','phone':'Separate cloud login through Chrome','password':'myQ email and password','cloud':'Provider browser sign-in, including Amazon when offered','credentials':'Existing OAuth credentials or BlueberryQDB migration','mqtt':'Existing MQTT relay'})}))
+            vol.Required('mode',default='credentials'):vol.In({
+                'credentials':'OAuth tokens with App Check',
+                'phone':'OAuth sign-in through BlueberryQDB with App Check'})}))
 
     async def async_step_native(self,user_input=None):
         errors={}
@@ -241,8 +244,7 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
 
     async def async_step_reconfigure(self,user_input=None):
         self._reconfigure_entry=self.hass.config_entries.async_get_entry(self.context['entry_id'])
-        if self._reconfigure_entry.data.get('mode')=='native':return await self.async_step_native(user_input)
-        if self._reconfigure_entry.data.get('mode')!='cloud':return self.async_abort(reason='cloud_only')
+        # Existing non-cloud entries remain operational until explicitly migrated.
         return await self.async_step_credentials(user_input)
 
     async def async_step_credentials(self,user_input=None):
@@ -261,6 +263,8 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
             if user_input.get('refresh_token'):settings['expires_at']=0
             if not settings.get('access_token') and not settings.get('refresh_token'):
                 errors['base']='missing_oauth_credentials'
+            elif not settings.get('app_bridge_url') and not settings.get('app_check_token'):
+                errors['base']='app_check_required'
             else:
                 settings.setdefault('expires_at',0)
                 if getattr(self,'_cloud',None):await self._cloud.close_login()
@@ -307,9 +311,7 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
 
     async def async_step_reauth(self,entry_data):
         self._reauth_entry=self.hass.config_entries.async_get_entry(self.context['entry_id'])
-        if self._reauth_entry.data.get('mode')=='native':return await self.async_step_native()
-        if self._reauth_entry.data.get('app_bridge_url'):return await self.async_step_phone_login()
-        return await self.async_step_login()
+        return await self.async_step_credentials()
 
     async def async_step_cloud(self,user_input=None):
         errors={}
@@ -372,7 +374,7 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
         else:
             if devices:return await self._complete_cloud(devices)
             errors['base']='no_devices'
-        if user_input and user_input.get('restart_login'):return await self.async_step_login()
+        if user_input and user_input.get('restart_login'):return await self.async_step_user()
         return self.async_show_form(step_id='discover',data_schema=vol.Schema({vol.Optional('restart_login',default=False):bool}),errors=errors,
             description_placeholders={'token_diagnostic':getattr(self,'_token_diagnostic','No token response recorded')})
 

@@ -71,17 +71,23 @@ class MyQCloud:
         self._login=None
         self._login_timer=None
         self._app_check_cache=None
+        self.on_credentials_changed=None
+        self.device_diagnostics={}
+        self._app_check_checked_at=0
 
     async def app_check_token(self):
         """Reuse a live bridge token across preflight, browser sign-in and exchange."""
         from .app_check import fetch_app_check_material, AppCheckBridgeError
         cached=self._app_check_cache
-        if cached and cached['expires_at']>time.time()+30:
+        if cached and cached['expires_at']>time.time()+300 and time.time()-self._app_check_checked_at<60:
             return cached['token']
         try:
             self._app_check_cache=await fetch_app_check_material(self.session,self.data)
+            self._app_check_checked_at=time.time()
         except AppCheckBridgeError as error:
             raise MyQCloudNetworkError(str(error)) from None
+        self.data['app_check_expires_at']=self._app_check_cache['expires_at']
+        self.data['app_check_synced_at']=time.time()
         return self._app_check_cache['token']
 
     def begin(self, force_login=True):
@@ -162,9 +168,11 @@ class MyQCloud:
             raise MyQCloudNetworkError(_network_reason(error, 'identity')) from None
         if not payload.get('access_token'):
             raise ValueError('Provider did not return an access token')
-        self.data.update(access_token=payload['access_token'],
+        self.data.update(oauth_refreshed_at=time.time(), oauth_status='ready', access_token=payload['access_token'],
                          refresh_token=payload.get('refresh_token', self.data.get('refresh_token', '')),
                          expires_at=time.time() + int(payload.get('expires_in', 3600)))
+
+        if self.on_credentials_changed:self.on_credentials_changed()
 
     async def request(self, method, url):
         async with self.lock:
@@ -172,9 +180,9 @@ class MyQCloud:
                 if not self.data.get('refresh_token'):
                     raise MyQCloudAuthError('Sign in to myQ again')
                 await self._token({'grant_type': 'refresh_token', 'refresh_token': self.data['refresh_token']})
-            headers = {'Authorization': 'Bearer ' + self.data['access_token'], 'BrandId': '1', 'User-Agent': USER_AGENT}
+            headers = {'Cache-Control':'no-cache', 'Authorization': 'Bearer ' + self.data['access_token'], 'BrandId': '1', 'User-Agent': USER_AGENT}
             try:
-                async with self.session.request(method, url, headers=headers, timeout=30) as response:
+                async with self.session.request(method, url, headers=headers, timeout=30, allow_redirects=False) as response:
                     if response.status == 429:
                         raise MyQCloudNetworkError('device_api_rate_limited')
                     if response.status >= 500:
@@ -190,15 +198,35 @@ class MyQCloud:
                 raise MyQCloudNetworkError(_network_reason(error, 'device_api')) from None
 
     async def devices(self):
+        if self.data.get('app_bridge_url'):
+            try:
+                await self.app_check_token()
+                self.data['app_check_status']='ready'
+            except MyQCloudNetworkError as error:
+                self.data['app_check_status']=error.reason
+        elif self.data.get('app_check_token'):
+            from .app_check import prepare_manual_token, AppCheckBridgeError
+            try:
+                token=prepare_manual_token(self.data['app_check_token'])
+                claim=token.split('.')[1]
+                import json
+                self.data['app_check_expires_at']=json.loads(base64.urlsafe_b64decode(claim+'='*(-len(claim)%4)))['exp']
+                self.data['app_check_status']='ready'
+            except AppCheckBridgeError as error:self.data['app_check_status']=str(error)
         accounts = await self.request('GET', 'https://accounts.myq-cloud.com/api/v6.0/accounts')
         devices = {}
         for account in accounts.get('accounts', []):
             account_id = str(account['id'])
             result = await self.request('GET', 'https://devices.myq-cloud.com/api/v5.2/Accounts/' + quote(account_id, safe='') + '/Devices')
             for device in result.get('items', []):
-                if device.get('device_family') == 'garagedoor' and device.get('serial_number'):
+                if device.get('serial_number') and (device.get('device_family') == 'garagedoor' or 'light_state' in device.get('state', {})):
                     key = account_id + '/' + device['serial_number']
                     devices[key] = {**device, 'account_id': account_id}
+                    self.device_diagnostics[key]={
+                        'device_family':device.get('device_family'),
+                        'state_fields':sorted(device.get('state',{})),
+                        'fetched_at':time.time()}
+        self.data['devices_synced_at']=time.time()
         return devices
 
     async def command(self, device, action):
