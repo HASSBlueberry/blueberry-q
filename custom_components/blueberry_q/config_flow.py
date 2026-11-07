@@ -38,6 +38,7 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
             self._auth_url=self._cloud.begin()
             return await self.async_step_callback(_error='browser_required')
         except TokenExchangeError as error:
+            self._token_diagnostic=error.diagnostic
             self._auth_url=self._cloud.begin()
             return await self.async_step_callback(_error=error.reason)
         except ProviderNetworkError as error:
@@ -182,21 +183,31 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
         if user_input:
             if user_input.get('restart_login'):
                 await self._cloud.close_login();self._auth_url=self._cloud.begin()
+                self._token_diagnostic='No token response recorded'
             else:
+                if user_input.get('app_check_token') and not self._cloud.data.get('app_bridge_url'):
+                    self._cloud.data['app_check_token']=user_input['app_check_token'].strip()
                 try:await self._cloud.finish(user_input.get('callback_url',''))
                 except OAuthCallbackError as error:errors['base']=error.reason
-                except TokenExchangeError as error:errors['base']=error.reason
+                except TokenExchangeError as error:
+                    errors['base']=error.reason
+                    self._token_diagnostic=error.diagnostic
                 except MyQCloudNetworkError as error:errors['base']=error.reason
                 except (ClientError,TimeoutError):errors['base']='identity_network_error'
                 except (ValueError,KeyError):errors['base']='cloud_auth_failed'
                 else:return await self.async_step_discover()
-        return self.async_show_form(step_id='callback',data_schema=vol.Schema({
-            vol.Optional('callback_url'):str,vol.Optional('restart_login',default=False):bool}),
-            description_placeholders={'auth_url':self._auth_url},errors=errors)
+        fields={vol.Optional('callback_url'):str,vol.Optional('restart_login',default=False):bool}
+        if not self._cloud.data.get('app_bridge_url'):
+            fields[vol.Optional('app_check_token')]=selector.TextSelector({'type':'password'})
+        return self.async_show_form(step_id='callback',data_schema=vol.Schema(fields),
+            description_placeholders={'auth_url':self._auth_url,'token_diagnostic':getattr(self,'_token_diagnostic','No token response recorded')},errors=errors)
 
     async def async_step_discover(self,user_input=None):
         errors={}
         try:devices=await self._cloud.devices()
+        except TokenExchangeError as error:
+            errors['base']=error.reason
+            self._token_diagnostic=error.diagnostic
         except MyQCloudAuthError:errors['base']='account_auth_failed'
         except MyQCloudNetworkError as error:errors['base']=error.reason
         except ClientResponseError as error:errors['base']='account_access_denied' if error.status in (401,403) else 'discovery_failed'
@@ -205,7 +216,8 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
             if devices:return await self._complete_cloud(devices)
             errors['base']='no_devices'
         if user_input and user_input.get('restart_login'):return await self.async_step_login()
-        return self.async_show_form(step_id='discover',data_schema=vol.Schema({vol.Optional('restart_login',default=False):bool}),errors=errors)
+        return self.async_show_form(step_id='discover',data_schema=vol.Schema({vol.Optional('restart_login',default=False):bool}),errors=errors,
+            description_placeholders={'token_diagnostic':getattr(self,'_token_diagnostic','No token response recorded')})
 
     async def _complete_cloud(self,devices):
         account_ids=sorted({d['account_id'] for d in devices.values()})

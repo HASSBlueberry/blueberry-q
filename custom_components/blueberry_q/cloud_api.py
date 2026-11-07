@@ -6,10 +6,13 @@ import base64
 import hashlib
 import secrets
 import time
+import logging
+import re
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
 import aiohttp
 
 IDENTITY = 'https://partner-identity.myq-cloud.com'
+USER_AGENT = 'BlueberryQ/0.5.1'
 
 
 class MyQCloudAuthError(ValueError):
@@ -22,8 +25,27 @@ class OAuthCallbackError(ValueError):
         super().__init__(reason);self.reason=reason
 
 class TokenExchangeError(MyQCloudAuthError):
-    def __init__(self,reason):
+    def __init__(self,reason,diagnostic='No token response recorded'):
         super().__init__('Provider token exchange failed');self.reason=reason
+        self.diagnostic=diagnostic
+
+
+TOKEN_ERRORS={'invalid_client':'oauth_client_rejected','invalid_grant':'oauth_code_expired',
+              'access_denied':'oauth_access_denied','invalid_scope':'oauth_scope_rejected',
+              'invalid_request':'oauth_request_invalid','unauthorized_client':'oauth_client_rejected',
+              'unsupported_grant_type':'oauth_grant_type_rejected'}
+
+
+def token_rejection(payload,status,source):
+    payload=payload if isinstance(payload,dict) else {}
+    error=payload.get('error')
+    error=error if isinstance(error,str) and error in TOKEN_ERRORS else 'other'
+    code=payload.get('code')
+    code=str(code) if isinstance(code,(str,int,float)) and re.fullmatch(r'[0-9]{3}\.[0-9]{1,6}[a-z]?',str(code)) else 'none'
+    reason='oauth_application_unauthorized' if code in ('401.122','401.122i') else TOKEN_ERRORS.get(error,'oauth_token_rejected')
+    diagnostic=f'HTTP {status}, OAuth {error}, provider {code}, App Check {source}'
+    logging.getLogger(__name__).warning('myQ token exchange rejected (%s)',diagnostic)
+    return TokenExchangeError(reason,diagnostic)
 
 class MyQCloudNetworkError(ValueError):
     """A provider request failed without exposing request or response secrets."""
@@ -90,7 +112,9 @@ class MyQCloud:
                           redirect_uri=self.data.get('redirect_uri', 'com.myqops://android'))
         if self.data.get('client_secret'):
             fields['client_secret'] = self.data['client_secret']
-        headers = {}
+        # HA's shared session identifies itself as HomeAssistant. The live
+        # identity endpoint rejects that agent before OAuth grant validation.
+        headers = {'User-Agent': USER_AGENT}
         if self.data.get('app_bridge_url'):
             from .app_check import fetch_app_check, AppCheckBridgeError
             try:
@@ -98,6 +122,11 @@ class MyQCloud:
             except AppCheckBridgeError as error:
                 raise MyQCloudNetworkError(str(error)) from None
         elif self.data.get('app_check_token'):
+            from .app_check import prepare_manual_token, AppCheckBridgeError
+            try:
+                self.data['app_check_token']=prepare_manual_token(self.data['app_check_token'])
+            except AppCheckBridgeError as error:
+                raise MyQCloudNetworkError(str(error)) from None
             headers['Firebase-AppCheck-Token'] = self.data['app_check_token']
         try:
             async with self.session.post(IDENTITY + '/connect/token', data=fields, headers=headers, timeout=30, allow_redirects=False) as response:
@@ -107,16 +136,11 @@ class MyQCloud:
                     raise MyQCloudNetworkError('identity_server_error')
                 if response.status in (400,401,403):
                     try:
-                        rejection=await response.json()
-                        error=rejection.get('error')
-                        provider_code=rejection.get('code')
+                        rejection=await response.json(content_type=None)
                     except (ValueError,AttributeError):
-                        error=None;provider_code=None
-                    if provider_code=='401.122':
-                        raise TokenExchangeError('oauth_application_unauthorized')
-                    reason={'invalid_client':'oauth_client_rejected','invalid_grant':'oauth_code_expired',
-                            'access_denied':'oauth_access_denied'}.get(error,'oauth_token_rejected')
-                    raise TokenExchangeError(reason)
+                        rejection=None
+                    source='bridge' if self.data.get('app_bridge_url') else 'manual' if headers.get('Firebase-AppCheck-Token') else 'none'
+                    raise token_rejection(rejection,response.status,source)
                 response.raise_for_status()
                 payload = await response.json()
         except (TokenExchangeError, MyQCloudNetworkError):
@@ -137,7 +161,7 @@ class MyQCloud:
                 if not self.data.get('refresh_token'):
                     raise MyQCloudAuthError('Sign in to myQ again')
                 await self._token({'grant_type': 'refresh_token', 'refresh_token': self.data['refresh_token']})
-            headers = {'Authorization': 'Bearer ' + self.data['access_token'], 'BrandId': '1'}
+            headers = {'Authorization': 'Bearer ' + self.data['access_token'], 'BrandId': '1', 'User-Agent': USER_AGENT}
             try:
                 async with self.session.request(method, url, headers=headers, timeout=30) as response:
                     if response.status == 429:

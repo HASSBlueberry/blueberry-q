@@ -192,3 +192,30 @@ was verified on the host, but the phone's retained logs had rotated past its
 acquisition event, so a fresh extraction could not be repeated in that run.
 Home Assistant OS USB pass-through and Supervisor Ingress remain to be tested
 on the target host. No door commands were sent.
+
+## Home Assistant token-exchange rejection fixed in 0.5.1
+
+A controlled live comparison reproduced the generic rejection when requests
+inherited a HomeAssistant User-Agent. With identical OAuth fields and the
+same valid App Check token, that agent received HTTP 403 without an OAuth
+error. An explicit `BlueberryQ/0.5.1` agent received the expected HTTP 400
+`invalid_grant` for the synthetic invalid code. The integration now overrides
+the agent on MyQ identity and device requests without changing Home
+Assistant's shared session. A real refresh and discovery succeeded using a
+session whose default agent identified itself as Home Assistant.
+
+The callback dialog now shows a sanitized rejection diagnostic, including
+HTTP status, allowlisted OAuth error, numeric provider code, and App Check
+source. Provider bodies, descriptions, callback values and tokens are not
+logged. Manual token preflight accepts a bare JWT, a JSON-quoted JWT, or the
+complete Firebase-AppCheck-Token header line. It rejects malformed candidates,
+wrong issuer metadata, and expired candidates before sending the OAuth code.
+These local metadata checks do not verify the JWT signature. A replacement
+manual token can be supplied in the callback dialog without changing the
+flow's state or PKCE verifier.
+
+After installing the update, restart Home Assistant and start a fresh sign-in,
+since restarting discards any pending flow's verifier. The
+[sanitized live validation](research/hass-user-agent-validation.json) records
+the request comparison and successful refresh/discovery. No door command was
+sent.

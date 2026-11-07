@@ -29,10 +29,11 @@
       },
       "callback": {
         "title": "Complete provider sign-in",
-        "description": "[Continue with myQ]({auth_url}). Finish sign-in and any verification on the provider page, then paste the complete com.myqops callback URL including code, state and issuer. Use the link from this setup session. If a code expires, select Start a fresh sign-in and submit to generate a new link. Amazon sign-in is available when offered by myQ.",
+        "description": "[Continue with myQ]({auth_url}). Finish sign-in and any verification on the provider page, then paste the complete com.myqops callback URL including code, state and issuer. Use the link from this setup session. If a code expires, select Start a fresh sign-in and submit to generate a new link. Amazon sign-in is available when offered by myQ. Token exchange diagnostic, {token_diagnostic}.",
         "data": {
           "callback_url": "Complete OAuth callback URL",
-          "restart_login": "Start a fresh sign-in"
+          "restart_login": "Start a fresh sign-in",
+          "app_check_token": "Replacement App Check token, optional"
         }
       },
       "login": {
@@ -65,7 +66,7 @@
       },
       "discover": {
         "title": "Discover myQ garage doors",
-        "description": "Sign-in has completed. Retry device discovery without exchanging the authorization code again. If access was revoked, start sign-in again.",
+        "description": "Sign-in has completed. Retry device discovery without exchanging the authorization code again. If access was revoked, start sign-in again. Token exchange diagnostic, {token_diagnostic}.",
         "data": {
           "restart_login": "Start sign-in again"
         }
@@ -105,7 +106,7 @@
       "oauth_access_denied": "myQ did not authorize this sign-in. Start a fresh sign-in and finish the provider prompts.",
       "oauth_code_expired": "myQ rejected the authorization code as expired, already used or invalid for this setup session. Start a fresh sign-in.",
       "oauth_client_rejected": "myQ rejected the OAuth client credentials. Check advanced client settings or use a client you are authorized to use.",
-      "oauth_token_rejected": "myQ rejected the token exchange. Start a fresh sign-in and check client settings if it repeats.",
+      "oauth_token_rejected": "myQ rejected the token exchange. Review the HTTP status and provider code in the token exchange diagnostic below before starting another sign-in.",
       "account_auth_failed": "The myQ account session expired. Start sign-in again.",
       "account_access_denied": "Sign-in completed, but myQ denied account or device API access. Retrying the callback will not grant API access.",
       "discovery_failed": "Sign-in completed, but device discovery failed. Submit again to retry discovery without reusing the authorization code.",
@@ -144,7 +145,12 @@
       "missing_oauth_credentials": "Enter an OAuth refresh token or an access token with its expiry time.",
       "invalid_app_bridge_url": "Enter an HTTP or HTTPS bridge origin without credentials, path, query or fragment.",
       "app_bridge_key_required": "Enter the BlueberryQDB connection key or use Supervisor discovery.",
-      "app_check_unavailable": "BlueberryQDB has no usable App Check token. Check the connected phone and open the official MyQ app to sign in if needed."
+      "app_check_unavailable": "BlueberryQDB has no usable App Check token. Check the connected phone and open the official MyQ app to sign in if needed.",
+      "app_check_token_invalid": "The pasted App Check token is malformed or belongs to a different token issuer. Paste the complete Firebase App Check token, not an OAuth access or refresh token.",
+      "app_check_token_expired": "The pasted App Check token has expired or has unusable expiry metadata. Extract a current token and paste it here before retrying.",
+      "oauth_request_invalid": "myQ rejected the token request as invalid. Review the safe token exchange diagnostic below.",
+      "oauth_scope_rejected": "myQ rejected the requested OAuth scope. Use the exact production app configuration.",
+      "oauth_grant_type_rejected": "myQ rejected the requested OAuth grant type. Review the token exchange diagnostic."
     },
     "abort": {
       "wrong_account": "Sign in to the same account as this integration entry.",
