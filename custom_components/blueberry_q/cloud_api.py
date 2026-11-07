@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlsplit
 import aiohttp
 
 IDENTITY = 'https://partner-identity.myq-cloud.com'
-USER_AGENT = 'BlueberryQ/0.5.1'
+USER_AGENT = 'BlueberryQ/0.6.0'
 
 
 class MyQCloudAuthError(ValueError):
@@ -71,17 +71,19 @@ class MyQCloud:
         self._login=None
         self._login_timer=None
 
-    def begin(self):
+    def begin(self, force_login=True):
         self.verifier = secrets.token_urlsafe(48)
         self.state = secrets.token_urlsafe(32)
         challenge = base64.urlsafe_b64encode(hashlib.sha256(self.verifier.encode()).digest()).rstrip(b'=').decode()
-        return IDENTITY + '/connect/authorize?' + urlencode({
+        parameters={
             'client_id': self.data.get('client_id', 'ANDROID_CGI_MYQ'),
             'redirect_uri': self.data.get('redirect_uri', 'com.myqops://android'),
             'response_type': 'code', 'scope': self.data.get('scope', 'MyQ_Residential offline_access'),
             'code_challenge': challenge, 'code_challenge_method': 'S256',
-            'state': self.state, 'prompt': 'login', 'acr_values': 'unified_flow:v1 brand:myq',
-        })
+            'state': self.state, 'acr_values': 'unified_flow:v1 brand:myq',
+        }
+        if force_login:parameters['prompt']='login'
+        return IDENTITY + '/connect/authorize?' + urlencode(parameters)
 
     async def finish(self, callback):
         if not getattr(self,'state',None) or not getattr(self,'verifier',None):

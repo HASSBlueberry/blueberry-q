@@ -1,4 +1,6 @@
 import asyncio
+import re
+from contextlib import suppress
 from pathlib import Path
 from .app_archive import load_app_material, AppArchiveError
 import voluptuous as vol
@@ -9,7 +11,7 @@ from aiohttp import ClientError,ClientResponseError
 from .cloud_api import MyQCloud,MyQCloudAuthError,MyQCloudNetworkError,OAuthCallbackError,TokenExchangeError
 from .login import BrowserRequired,InvalidCredentials,ProviderHTTPError,ProviderNetworkError,VerificationRequired,VerificationMethodRequired
 from .const import DOMAIN
-from .app_check import bridge_url, AppCheckBridgeError
+from .app_check import bridge_url, AppCheckBridgeError, fetch_app_check, prepare_manual_token, phone_request, wait_phone_callback
 
 AUTH_SETTINGS=('client_id','redirect_uri','client_secret','scope','app_check_token','app_bridge_url','app_bridge_key','app_bridge_id')
 
@@ -17,13 +19,89 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
     VERSION=2
 
     def async_remove(self):
+        if getattr(self,'_phone_task',None) and not self._phone_task.done():self._phone_task.cancel()
         if getattr(self,'_cloud',None):asyncio.create_task(self._cloud.close_login())
 
     async def async_step_user(self,user_input=None):
         if user_input:
-            return await {'cloud':self.async_step_cloud,'password':self.async_step_login,'credentials':self.async_step_credentials,'mqtt':self.async_step_mqtt}[user_input['mode']]()
+            return await {'phone':self.async_step_phone_login,'cloud':self.async_step_cloud,'password':self.async_step_login,'credentials':self.async_step_credentials,'mqtt':self.async_step_mqtt}[user_input['mode']]()
         return self.async_show_form(step_id='user',data_schema=vol.Schema({
-            vol.Required('mode',default='cloud'):vol.In({'password':'myQ email and password','cloud':'Provider browser sign-in, including Amazon when offered','credentials':'Existing OAuth credentials or BlueberryQDB migration','mqtt':'Existing MQTT relay'})}))
+            vol.Required('mode',default='phone' if getattr(self,'_setup_settings',{}).get('app_bridge_url') else 'cloud'):vol.In({'phone':'Sign in on connected phone with BlueberryQDB','password':'myQ email and password','cloud':'Provider browser sign-in, including Amazon when offered','credentials':'Existing OAuth credentials or BlueberryQDB migration','mqtt':'Existing MQTT relay'})}))
+
+    async def async_step_phone_login(self,user_input=None,_error=None):
+        errors={'base':_error} if _error else {}
+        if user_input is not None:
+            try:
+                settings=self._client_settings(user_input)
+                if not settings.get('app_bridge_url'):raise AppCheckBridgeError('invalid_app_bridge_url')
+                if not settings.get('app_bridge_key'):raise AppCheckBridgeError('app_bridge_key_required')
+                self._phone_import_token=prepare_manual_token(user_input['app_check_token']) if user_input.get('app_check_token') else None
+            except AppCheckBridgeError as error:errors['base']=str(error)
+            else:
+                if getattr(self,'_cloud',None):await self._cloud.close_login()
+                self._setup_settings=settings
+                self._cloud=MyQCloud(async_get_clientsession(self.hass),settings)
+                self._phone_task=None
+                self._phone_error=None
+                return await self.async_step_phone_wait()
+        defaults=self._client_settings()
+        fields={vol.Required('app_bridge_url',default=defaults.get('app_bridge_url','')):str,
+                vol.Optional('app_bridge_key'):selector.TextSelector({'type':'password'}),
+                vol.Optional('app_check_token'):selector.TextSelector({'type':'password'})}
+        return self.async_show_form(step_id='phone_login',data_schema=vol.Schema(fields),errors=errors,
+            description_placeholders={'token_diagnostic':getattr(self,'_token_diagnostic','No token response recorded')})
+
+    async def _phone_authenticate(self):
+        session=async_get_clientsession(self.hass)
+        settings=self._cloud.data
+        session_id=None
+        try:
+            if self._phone_import_token:
+                await phone_request(session,settings,'POST','/v1/app-check',{'token':self._phone_import_token})
+                self._phone_import_token=None
+            # Fail before asking for a real authorization code when attestation
+            # is unavailable. The same bridge also supplies it during exchange.
+            await fetch_app_check(session,settings)
+            settings.pop('app_check_token',None)
+            authorize_url=self._cloud.begin(force_login=False)
+            start_task=asyncio.create_task(phone_request(session,settings,'POST','/v1/oauth/sessions',{'authorize_url':authorize_url}))
+            try:
+                result=await asyncio.shield(start_task)
+            except asyncio.CancelledError:
+                # A cancellation can arrive after QDB created the session but
+                # before its response reached HA. Obtain its ID for cleanup.
+                with suppress(AppCheckBridgeError,ClientError,TimeoutError):
+                    result=await start_task
+                    session_id=result.get('id') if isinstance(result,dict) else None
+                raise
+            session_id=result.get('id') if isinstance(result,dict) else None
+            callback=await wait_phone_callback(session,settings,session_id)
+            await self._cloud.finish(callback)
+        except TokenExchangeError as error:
+            self._phone_error=error.reason
+            self._token_diagnostic=error.diagnostic
+        except (AppCheckBridgeError,MyQCloudNetworkError,OAuthCallbackError) as error:
+            self._phone_error=getattr(error,'reason',None) or str(error)
+        except (ClientError,TimeoutError,ValueError,KeyError):self._phone_error='phone_bridge_unavailable'
+        finally:
+            self._phone_import_token=None
+            if isinstance(session_id,str) and re.fullmatch(r'[A-Za-z0-9_-]{32,128}',session_id):
+                with suppress(AppCheckBridgeError,ClientError,TimeoutError):
+                    await asyncio.shield(phone_request(session,settings,'DELETE','/v1/oauth/sessions/'+session_id))
+
+    async def async_step_phone_wait(self,user_input=None):
+        if getattr(self,'_phone_task',None) is None:
+            self._phone_task=self.hass.async_create_task(self._phone_authenticate())
+        if not self._phone_task.done():
+            return self.async_show_progress(step_id='phone_wait',progress_action='phone_login',progress_task=self._phone_task)
+        return self.async_show_progress_done(next_step_id='phone_finish')
+
+    async def async_step_phone_finish(self,user_input=None):
+        if not self._phone_task.done():return await self.async_step_phone_wait()
+        if self._phone_task.cancelled():return await self.async_step_phone_login(_error='phone_login_cancelled')
+        self._phone_task.result()
+        if self._phone_error:return await self.async_step_phone_login(_error=self._phone_error)
+        return await self.async_step_discover()
 
     async def _auth_operation(self,operation,step):
         try:await operation()
@@ -101,6 +179,9 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
             try:settings={**{k:v for k,v in (previous.data.items() if previous else []) if k not in AUTH_SETTINGS},**self._client_settings(user_input)}
             except AppCheckBridgeError:
                 return self.async_show_form(step_id='credentials',data_schema=self._credentials_schema(),errors={'base':'invalid_app_bridge_url'})
+            if user_input.get('use_phone_login'):
+                self._setup_settings={k:v for k,v in settings.items() if k in AUTH_SETTINGS}
+                return await self.async_step_phone_login()
             for key in ('access_token','refresh_token'):
                 if user_input.get(key):settings[key]=user_input[key].strip()
             if user_input.get('expires_at') is not None:settings['expires_at']=user_input['expires_at']
@@ -120,6 +201,7 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
                 vol.Optional('expires_at'):vol.All(vol.Coerce(float),vol.Range(min=0)),
                 vol.Optional('client_id'):str,vol.Optional('redirect_uri'):str,
                 vol.Optional('scope'):str,vol.Optional('client_secret'):selector.TextSelector({'type':'password'})}
+        fields[vol.Optional('use_phone_login',default=False)]=bool
         fields.update(self._attestation_fields())
         return vol.Schema(fields)
 
@@ -152,6 +234,7 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
 
     async def async_step_reauth(self,entry_data):
         self._reauth_entry=self.hass.config_entries.async_get_entry(self.context['entry_id'])
+        if self._reauth_entry.data.get('app_bridge_url'):return await self.async_step_phone_login()
         return await self.async_step_login()
 
     async def async_step_cloud(self,user_input=None):
