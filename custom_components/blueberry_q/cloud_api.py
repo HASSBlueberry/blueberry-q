@@ -82,12 +82,25 @@ class MyQCloud:
         await self._token({'grant_type':'authorization_code','code':code,'code_verifier':self.verifier})
 
     async def _token(self, form):
-        fields = {'client_id': self.data.get('client_id', 'ANDROID_CGI_MYQ'),
-                  'redirect_uri': self.data.get('redirect_uri', 'com.myqops://android'), **form}
+        fields = {'client_id': self.data.get('client_id', 'ANDROID_CGI_MYQ'), **form}
+        # MyQOAuthInterceptor builds refresh requests with only client_id,
+        # grant_type and refresh_token. Scope and redirect belong to code exchange.
+        if form.get('grant_type') == 'authorization_code':
+            fields.update(scope=self.data.get('scope', 'MyQ_Residential offline_access'),
+                          redirect_uri=self.data.get('redirect_uri', 'com.myqops://android'))
         if self.data.get('client_secret'):
             fields['client_secret'] = self.data['client_secret']
+        headers = {}
+        if self.data.get('app_bridge_url'):
+            from .app_check import fetch_app_check, AppCheckBridgeError
+            try:
+                headers['Firebase-AppCheck-Token'] = await fetch_app_check(self.session, self.data)
+            except AppCheckBridgeError as error:
+                raise MyQCloudNetworkError(str(error)) from None
+        elif self.data.get('app_check_token'):
+            headers['Firebase-AppCheck-Token'] = self.data['app_check_token']
         try:
-            async with self.session.post(IDENTITY + '/connect/token', data=fields, timeout=30) as response:
+            async with self.session.post(IDENTITY + '/connect/token', data=fields, headers=headers, timeout=30, allow_redirects=False) as response:
                 if response.status == 429:
                     raise MyQCloudNetworkError('identity_rate_limited')
                 if response.status >= 500:

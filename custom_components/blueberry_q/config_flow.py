@@ -9,18 +9,21 @@ from aiohttp import ClientError,ClientResponseError
 from .cloud_api import MyQCloud,MyQCloudAuthError,MyQCloudNetworkError,OAuthCallbackError,TokenExchangeError
 from .login import BrowserRequired,InvalidCredentials,ProviderHTTPError,ProviderNetworkError,VerificationRequired,VerificationMethodRequired
 from .const import DOMAIN
+from .app_check import bridge_url, AppCheckBridgeError
+
+AUTH_SETTINGS=('client_id','redirect_uri','client_secret','scope','app_check_token','app_bridge_url','app_bridge_key','app_bridge_id')
 
 class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
-    VERSION=1
+    VERSION=2
 
     def async_remove(self):
         if getattr(self,'_cloud',None):asyncio.create_task(self._cloud.close_login())
 
     async def async_step_user(self,user_input=None):
         if user_input:
-            return await {'cloud':self.async_step_cloud,'password':self.async_step_login,'mqtt':self.async_step_mqtt}[user_input['mode']]()
+            return await {'cloud':self.async_step_cloud,'password':self.async_step_login,'credentials':self.async_step_credentials,'mqtt':self.async_step_mqtt}[user_input['mode']]()
         return self.async_show_form(step_id='user',data_schema=vol.Schema({
-            vol.Required('mode',default='cloud'):vol.In({'password':'myQ email and password','cloud':'Provider browser sign-in, including Amazon when offered','mqtt':'Existing MQTT relay'})}))
+            vol.Required('mode',default='cloud'):vol.In({'password':'myQ email and password','cloud':'Provider browser sign-in, including Amazon when offered','credentials':'Existing OAuth credentials or BlueberryQDB migration','mqtt':'Existing MQTT relay'})}))
 
     async def _auth_operation(self,operation,step):
         try:await operation()
@@ -52,17 +55,81 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
         return await self.async_step_discover()
 
     def _client_settings(self,values=None):
-        previous=getattr(self,'_reauth_entry',None)
-        settings={key:value for key,value in (previous.data.items() if previous else []) if key in ('client_id','redirect_uri','client_secret','scope')}
+        previous=getattr(self,'_reauth_entry',None) or getattr(self,'_reconfigure_entry',None)
+        settings={key:value for key,value in (previous.data.items() if previous else []) if key in AUTH_SETTINGS}
+        settings.update(getattr(self,'_setup_settings',{}))
         for key,value in (values or {}).items():
-            if key in ('client_id','redirect_uri','client_secret','scope') and value:settings[key]=value
+            if key in AUTH_SETTINGS and value:settings[key]=value.strip() if isinstance(value,str) else value
+        if (values or {}).get('use_app_bridge') is False:
+            for key in ('app_bridge_url','app_bridge_key','app_bridge_id'):settings.pop(key,None)
+        if settings.get('app_bridge_url'):settings['app_bridge_url']=bridge_url(settings['app_bridge_url'])
         return settings
+
+    @staticmethod
+    def _attestation_fields():
+        return {vol.Optional('app_check_token'):selector.TextSelector({'type':'password'}),
+                vol.Optional('app_bridge_url'):str,
+                vol.Optional('app_bridge_key'):selector.TextSelector({'type':'password'}),
+                vol.Optional('use_app_bridge',default=True):bool}
+
+    async def async_step_hassio(self,discovery_info):
+        info=discovery_info.config
+        try:
+            self._setup_settings={'app_bridge_url':bridge_url(info['app_bridge_url']),
+                                  'app_bridge_key':info['app_bridge_key'],'app_bridge_id':info['bridge_id']}
+        except (KeyError,AppCheckBridgeError):return self.async_abort(reason='invalid_discovery')
+        for entry in self._async_current_entries():
+            if entry.data.get('app_bridge_id')==info['bridge_id'] or entry.data.get('app_bridge_url')==self._setup_settings['app_bridge_url']:
+                self.hass.config_entries.async_update_entry(entry,data={**entry.data,**self._setup_settings})
+                await self.hass.config_entries.async_reload(entry.entry_id)
+                return self.async_abort(reason='already_configured')
+        await self.async_set_unique_id('qdb:'+info['bridge_id'])
+        # Account identity is established by discovery after sign-in. The app's
+        # identity must not replace the account unique ID or create a duplicate.
+        return await self.async_step_user()
+
+    async def async_step_reconfigure(self,user_input=None):
+        self._reconfigure_entry=self.hass.config_entries.async_get_entry(self.context['entry_id'])
+        if self._reconfigure_entry.data.get('mode')!='cloud':return self.async_abort(reason='cloud_only')
+        return await self.async_step_credentials(user_input)
+
+    async def async_step_credentials(self,user_input=None):
+        errors={}
+        previous=getattr(self,'_reconfigure_entry',None) or getattr(self,'_reauth_entry',None)
+        if user_input is not None:
+            try:settings={**{k:v for k,v in (previous.data.items() if previous else []) if k not in AUTH_SETTINGS},**self._client_settings(user_input)}
+            except AppCheckBridgeError:
+                return self.async_show_form(step_id='credentials',data_schema=self._credentials_schema(),errors={'base':'invalid_app_bridge_url'})
+            for key in ('access_token','refresh_token'):
+                if user_input.get(key):settings[key]=user_input[key].strip()
+            if user_input.get('expires_at') is not None:settings['expires_at']=user_input['expires_at']
+            if user_input.get('refresh_token'):settings['expires_at']=0
+            if not settings.get('access_token') and not settings.get('refresh_token'):
+                errors['base']='missing_oauth_credentials'
+            else:
+                settings.setdefault('expires_at',0)
+                if getattr(self,'_cloud',None):await self._cloud.close_login()
+                self._cloud=MyQCloud(async_get_clientsession(self.hass),settings)
+                return await self.async_step_discover()
+        return self.async_show_form(step_id='credentials',data_schema=self._credentials_schema(),errors=errors)
+
+    def _credentials_schema(self):
+        fields={vol.Optional('access_token'):selector.TextSelector({'type':'password'}),
+                vol.Optional('refresh_token'):selector.TextSelector({'type':'password'}),
+                vol.Optional('expires_at'):vol.All(vol.Coerce(float),vol.Range(min=0)),
+                vol.Optional('client_id'):str,vol.Optional('redirect_uri'):str,
+                vol.Optional('scope'):str,vol.Optional('client_secret'):selector.TextSelector({'type':'password'})}
+        fields.update(self._attestation_fields())
+        return vol.Schema(fields)
 
     async def async_step_login(self,user_input=None,_error=None):
         errors={'base':_error} if _error else {}
         if user_input:
             if getattr(self,'_cloud',None):await self._cloud.close_login()
-            self._cloud=MyQCloud(async_get_clientsession(self.hass),self._client_settings(user_input))
+            try:settings=self._client_settings(user_input)
+            except AppCheckBridgeError:
+                return await self.async_step_login(_error='invalid_app_bridge_url')
+            self._cloud=MyQCloud(async_get_clientsession(self.hass),settings)
             if user_input.get('use_browser'):
                 self._auth_url=self._cloud.begin()
                 return await self.async_step_callback()
@@ -70,6 +137,7 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
             else:return await self._auth_operation(lambda:self._cloud.login_password(user_input['username'],user_input['password']),'login')
         fields={vol.Optional('username'):str,vol.Optional('password'):selector.TextSelector({'type':'password'}),vol.Optional('use_browser',default=False):bool}
         fields[vol.Optional('client_secret',default='')]=selector.TextSelector({'type':'password'})
+        fields.update(self._attestation_fields())
         return self.async_show_form(step_id='login',data_schema=vol.Schema(fields),errors=errors)
 
     async def async_step_verification(self,user_input=None,_error=None):
@@ -100,11 +168,14 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
                 errors['base']=error.reason
             else:
                 if getattr(self,'_cloud',None):await self._cloud.close_login()
+                try:settings.update(self._client_settings(user_input))
+                except AppCheckBridgeError:
+                    return self.async_show_form(step_id='cloud',data_schema=vol.Schema({vol.Required('app_archive',default=default_app):str,**self._attestation_fields()}),errors={'base':'invalid_app_bridge_url'})
                 self._cloud=MyQCloud(async_get_clientsession(self.hass),settings)
                 self._auth_url=self._cloud.begin()
                 return await self.async_step_callback()
         return self.async_show_form(step_id='cloud',data_schema=vol.Schema({
-            vol.Required('app_archive',default=default_app):str}),errors=errors)
+            vol.Required('app_archive',default=default_app):str,**self._attestation_fields()}),errors=errors)
 
     async def async_step_callback(self,user_input=None,_error=None):
         errors={'base':_error} if _error else {}
@@ -139,11 +210,12 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
     async def _complete_cloud(self,devices):
         account_ids=sorted({d['account_id'] for d in devices.values()})
         await self.async_set_unique_id('cloud:'+','.join(account_ids))
-        if getattr(self,'_reauth_entry',None):
-            if self._reauth_entry.unique_id!=self.unique_id:return self.async_abort(reason='wrong_account')
-            self.hass.config_entries.async_update_entry(self._reauth_entry,data={'mode':'cloud',**self._cloud.data})
-            await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
-            return self.async_abort(reason='reauth_successful')
+        previous=getattr(self,'_reauth_entry',None) or getattr(self,'_reconfigure_entry',None)
+        if previous:
+            if previous.unique_id!=self.unique_id:return self.async_abort(reason='wrong_account')
+            self.hass.config_entries.async_update_entry(previous,data={'mode':'cloud',**self._cloud.data})
+            await self.hass.config_entries.async_reload(previous.entry_id)
+            return self.async_abort(reason='reauth_successful' if getattr(self,'_reauth_entry',None) else 'reconfigure_successful')
         self._abort_if_unique_id_configured()
         return self.async_create_entry(title='myQ cloud',data={'mode':'cloud',**self._cloud.data})
 

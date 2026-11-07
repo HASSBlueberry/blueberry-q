@@ -15,6 +15,17 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     return True
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Retain existing account credentials and MQTT identities during upgrade."""
+    if entry.version > 2:
+        return False
+    if entry.version < 2:
+        data = dict(entry.data)
+        data.setdefault('mode', 'cloud' if data.get('refresh_token') or data.get('access_token') else 'mqtt')
+        hass.config_entries.async_update_entry(entry, data=data, version=2)
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store = {}
     if entry.data.get('mode') == 'cloud':
@@ -22,8 +33,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async def update():
             try:
                 result = await client.devices()
-                if client.data != dict(entry.data):
-                    hass.config_entries.async_update_entry(entry, data=client.data)
                 return result
             except MyQCloudAuthError as err:
                 raise ConfigEntryAuthFailed('myQ session needs a new sign-in') from err
@@ -33,6 +42,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 raise UpdateFailed(f'myQ provider returned HTTP {err.status}') from err
             except (ClientError, TimeoutError, ValueError, KeyError) as err:
                 raise UpdateFailed('myQ account refresh failed') from err
+            finally:
+                # A successful refresh can rotate credentials before device
+                # discovery fails. Persist rotation even on that failure.
+                if client.data != dict(entry.data):
+                    hass.config_entries.async_update_entry(entry, data=client.data)
         coordinator = DataUpdateCoordinator(hass, logging.getLogger(__name__), name='myQ cloud',
                                             update_method=update, update_interval=timedelta(seconds=60))
         await coordinator.async_config_entry_first_refresh()

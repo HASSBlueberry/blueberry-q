@@ -20,7 +20,11 @@
         "title": "Read myQ application configuration",
         "description": "Select the pre-downloaded myQ APK or APKS on the Home Assistant filesystem. Setup reads production OAuth settings locally without executing the app. A runtime attestation token, if required by myQ, cannot be extracted from a static archive.",
         "data": {
-          "app_archive": "myQ APK or APKS path"
+          "app_archive": "myQ APK or APKS path",
+          "app_check_token": "App Check token, optional with BlueberryQDB",
+          "app_bridge_url": "BlueberryQDB URL",
+          "app_bridge_key": "BlueberryQDB connection key",
+          "use_app_bridge": "Use BlueberryQDB when configured"
         }
       },
       "callback": {
@@ -38,7 +42,11 @@
           "username": "myQ email",
           "password": "myQ password",
           "client_secret": "OAuth client secret, if required",
-          "use_browser": "Use provider browser sign-in instead"
+          "use_browser": "Use provider browser sign-in instead",
+          "app_check_token": "App Check token, optional with BlueberryQDB",
+          "app_bridge_url": "BlueberryQDB URL",
+          "app_bridge_key": "BlueberryQDB connection key",
+          "use_app_bridge": "Use BlueberryQDB when configured"
         }
       },
       "verification": {
@@ -60,6 +68,23 @@
         "description": "Sign-in has completed. Retry device discovery without exchanging the authorization code again. If access was revoked, start sign-in again.",
         "data": {
           "restart_login": "Start sign-in again"
+        }
+      },
+      "credentials": {
+        "title": "Use existing myQ credentials",
+        "description": "Enter a refresh token, or an access token and its Unix expiry time. You can copy these fields from your private runtime-auth JSON. Refresh tokens are verified before saving. Connect BlueberryQDB for automatic App Check extraction, or paste an App Check token. During reconfiguration, blank fields retain saved values. A bridge URL takes priority over a pasted App Check token. These credentials are stored in Home Assistant config entry storage.",
+        "data": {
+          "access_token": "OAuth access token",
+          "refresh_token": "OAuth refresh token",
+          "expires_at": "Access token expiry as Unix seconds",
+          "client_id": "OAuth client ID",
+          "redirect_uri": "Registered callback URI",
+          "scope": "OAuth scope",
+          "client_secret": "OAuth client secret",
+          "app_check_token": "App Check token, optional with BlueberryQDB",
+          "app_bridge_url": "BlueberryQDB URL",
+          "app_bridge_key": "BlueberryQDB connection key",
+          "use_app_bridge": "Use BlueberryQDB when configured"
         }
       }
     },
@@ -115,13 +140,19 @@
       "app_callback_unsupported": "The app configuration uses an unsupported OAuth callback URI.",
       "app_archive_layout": "The archive contains too many nested APK files.",
       "app_archive_corrupt": "The file is not a readable APK/APKS ZIP archive, is damaged, or uses unsupported encryption or compression.",
-      "app_config_missing": "No assets/myq-config.json was found in this archive or its APK files. Check that this is the complete Android myQ application."
+      "app_config_missing": "No assets/myq-config.json was found in this archive or its APK files. Check that this is the complete Android myQ application.",
+      "missing_oauth_credentials": "Enter an OAuth refresh token or an access token with its expiry time.",
+      "invalid_app_bridge_url": "Enter an HTTP or HTTPS bridge origin without credentials, path, query or fragment.",
+      "app_bridge_key_required": "Enter the BlueberryQDB connection key or use Supervisor discovery.",
+      "app_check_unavailable": "BlueberryQDB has no usable App Check token. Check the connected phone and open the official MyQ app to sign in if needed."
     },
     "abort": {
       "wrong_account": "Sign in to the same account as this integration entry.",
       "reauth_successful": "Sign-in updated.",
-      "reconfigure_successful": "Device selection updated.",
-      "already_configured": "This account or device is already configured."
+      "reconfigure_successful": "MyQ credentials and App Check settings updated.",
+      "already_configured": "This account or device is already configured.",
+      "invalid_discovery": "The BlueberryQDB discovery message is incomplete.",
+      "cloud_only": "Reconfiguration is available for cloud accounts."
     }
   }
 }
