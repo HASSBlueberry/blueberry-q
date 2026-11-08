@@ -73,7 +73,7 @@
       },
       "credentials": {
         "title": "Use existing myQ credentials",
-        "description": "OAuth and App Check are required. Access and refresh tokens are stored in Home Assistant and renewed OAuth tokens are saved automatically. Blank fields retain saved values. Connect BlueberryQDB to sync App Check automatically. Diagnostic sensors show expiry and sync times without exposing secrets.",
+        "description": "OAuth and App Check are required. OAuth tokens are stored in Home Assistant and renewed tokens are saved automatically. Select Sync OAuth tokens from BlueberryQDB to import tokens exchanged in its panel. Connect BlueberryQDB to sync App Check automatically.",
         "data": {
           "access_token": "OAuth access token",
           "refresh_token": "OAuth refresh token",
@@ -86,7 +86,8 @@
           "app_bridge_url": "BlueberryQDB URL",
           "app_bridge_key": "BlueberryQDB connection key",
           "use_app_bridge": "Use BlueberryQDB when configured",
-          "use_phone_login": "Sign in on the connected phone instead"
+          "use_phone_login": "Sign in on the connected phone instead",
+          "sync_oauth_from_bridge": "Sync OAuth tokens from BlueberryQDB"
         }
       },
       "phone_login": {
@@ -166,6 +167,7 @@
       "missing_oauth_credentials": "Enter an OAuth refresh token or an access token with its expiry time.",
       "invalid_app_bridge_url": "Enter an HTTP or HTTPS bridge origin without credentials, path, query or fragment.",
       "app_bridge_key_required": "Enter the BlueberryQDB connection key or use Supervisor discovery.",
+      "oauth_tokens_unavailable": "No exchanged OAuth tokens are available in BlueberryQDB. Complete its manual callback exchange first.",
       "app_check_unavailable": "BlueberryQDB has no usable App Check token. Check the connected phone and open the official MyQ app to sign in if needed.",
       "app_check_token_invalid": "The pasted App Check token is malformed or belongs to a different token issuer. Paste the complete Firebase App Check token, not an OAuth access or refresh token.",
       "app_check_token_expired": "The pasted App Check token has expired or has unusable expiry metadata. Extract a current token and paste it here before retrying.",

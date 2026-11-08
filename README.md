@@ -1,13 +1,14 @@
 # OAuth and App Check renewal
 
-Integration 0.8.0 offers OAuth credentials plus App Check, or OAuth browser
-sign-in through BlueberryQDB. Other setup methods are deprecated and hidden.
-Existing entries are retained until the user migrates them. OAuth refresh
-rotation is saved immediately, even if a later device request fails.
-Home Assistant diagnostic sensors show access-token expiry, last OAuth
-renewal, App Check expiry and sync time, and the last device sync. Secrets
-are not published as entity attributes. A manually pasted App Check token
-cannot renew itself. Configure BlueberryQDB to retrieve replacements.
+Integration 0.8.0 can import OAuth credentials from BlueberryQDB. Start manual
+MyQ sign-in in the QDB panel, finish verification, and copy the entire
+`com.myqops://android?...` callback URL into the panel. QDB exchanges the code
+and stores the access and refresh tokens. During BlueberryQ setup, enter or
+select the QDB URL and key, then choose Sync OAuth tokens from BlueberryQDB.
+When a bridge is configured, QDB owns OAuth refresh and BlueberryQ syncs the
+current credentials through `/v1/oauth/tokens`. This avoids competing refresh
+requests. Home Assistant diagnostic sensors report token expiry and sync
+times without exposing token values as entity attributes.
 
 BlueberryQDB 0.4.0 keeps App Check in private persistent storage, opens MyQ
 near expiry, and polls its process logs for up to 60 seconds. The panel shows
@@ -31,9 +32,10 @@ credentials and a verification code at most once per attempt. It can select
 an explicitly labelled email delivery button. Prefilled fields that differ
 from the configured values must be cleared on the phone first. UI text input
 currently supports printable ASCII without spaces or percent characters.
-Automatic recovery has a 30-minute cooldown. It does not log out an existing
-session. The app must actually issue and log a fresh token for recovery to
-succeed. A fresh-token path has not been validated on the real login screen.
+Automatic recovery has a 30-minute cooldown. It signs out through the app's
+visible profile screen before signing in again. The app must actually issue
+and log a fresh App Check token for recovery to succeed. A fresh-token path
+has not been validated on the real login screen.
 
 ADB targets may point to an externally managed Android environment. This
 release does not package ReDroid, Magisk, Zygisk or an integrity provider.

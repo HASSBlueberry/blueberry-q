@@ -176,7 +176,19 @@ class MyQCloud:
 
     async def request(self, method, url):
         async with self.lock:
+            if self.data.get('app_bridge_url'):
+                from .app_check import fetch_oauth_material, AppCheckBridgeError
+                try:
+                    latest=await fetch_oauth_material(self.session,self.data)
+                except AppCheckBridgeError as error:
+                    if str(error)=='oauth_tokens_unavailable':raise MyQCloudAuthError('BlueberryQDB has no usable MyQ OAuth session') from None
+                    raise MyQCloudNetworkError(str(error)) from None
+                changed=any(self.data.get(key)!=value for key,value in latest.items())
+                self.data.update(latest)
+                if changed and self.on_credentials_changed:self.on_credentials_changed()
             if float(self.data.get('expires_at', 0)) < time.time() + 60:
+                if self.data.get('app_bridge_url'):
+                    raise MyQCloudAuthError('BlueberryQDB did not provide a current MyQ OAuth session')
                 if not self.data.get('refresh_token'):
                     raise MyQCloudAuthError('Sign in to myQ again')
                 await self._token({'grant_type': 'refresh_token', 'refresh_token': self.data['refresh_token']})

@@ -78,6 +78,30 @@ async def fetch_app_check_material(session, settings):
 async def fetch_app_check(session, settings):
     return (await fetch_app_check_material(session,settings))['token']
 
+
+async def fetch_oauth_material(session, settings):
+    """Import OAuth tokens saved by the paired BlueberryQDB bridge."""
+    if not settings.get('app_bridge_url'):raise AppCheckBridgeError('invalid_app_bridge_url')
+    url=bridge_url(settings['app_bridge_url'])
+    key=settings.get('app_bridge_key','')
+    if not key:raise AppCheckBridgeError('app_bridge_key_required')
+    try:
+        async with session.get(url+'/v1/oauth/tokens',headers={'Authorization':'Bearer '+key},
+                               timeout=30,allow_redirects=False) as response:
+            if response.status in (401,403):raise AppCheckBridgeError('app_bridge_unauthorized')
+            if response.status!=200:raise AppCheckBridgeError('oauth_tokens_unavailable')
+            payload=await response.json()
+        if not isinstance(payload,dict) or not isinstance(payload.get('access_token'),str):
+            raise AppCheckBridgeError('oauth_tokens_unavailable')
+        expiry=payload.get('expires_at')
+        if not isinstance(expiry,(int,float)) or isinstance(expiry,bool):raise AppCheckBridgeError('oauth_tokens_unavailable')
+        refresh=payload.get('refresh_token','')
+        if not isinstance(refresh,str):raise AppCheckBridgeError('oauth_tokens_unavailable')
+        return {'access_token':payload['access_token'],'refresh_token':refresh,'expires_at':expiry}
+    except AppCheckBridgeError:raise
+    except (aiohttp.ClientError,TimeoutError,ValueError,TypeError,AttributeError):
+        raise AppCheckBridgeError('oauth_tokens_unavailable') from None
+
 PHONE_ERRORS = {
     'phone_login_in_progress','phone_login_timeout','phone_login_session_missing',
     'phone_callback_mismatch','phone_chrome_not_ready','phone_browser_unavailable',

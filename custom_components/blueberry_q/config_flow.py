@@ -13,7 +13,7 @@ from aiohttp import ClientError,ClientResponseError
 from .cloud_api import MyQCloud,MyQCloudAuthError,MyQCloudNetworkError,OAuthCallbackError,TokenExchangeError
 from .login import BrowserRequired,InvalidCredentials,ProviderHTTPError,ProviderNetworkError,VerificationRequired,VerificationMethodRequired
 from .const import DOMAIN
-from .app_check import bridge_url, AppCheckBridgeError, prepare_manual_token, phone_request, wait_phone_callback
+from .app_check import bridge_url, AppCheckBridgeError, prepare_manual_token, phone_request, wait_phone_callback, fetch_oauth_material
 from .native_api import NativeMyQ
 
 AUTH_SETTINGS=('client_id','redirect_uri','client_secret','scope','app_check_token','app_bridge_url','app_bridge_key','app_bridge_id')
@@ -254,6 +254,12 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
             try:settings={**{k:v for k,v in (previous.data.items() if previous else []) if k not in AUTH_SETTINGS},**self._client_settings(user_input)}
             except AppCheckBridgeError:
                 return self.async_show_form(step_id='credentials',data_schema=self._credentials_schema(),errors={'base':'invalid_app_bridge_url'})
+            if user_input.get('sync_oauth_from_bridge'):
+                try:
+                    imported=await fetch_oauth_material(async_get_clientsession(self.hass),settings)
+                    settings.update(imported)
+                except AppCheckBridgeError as error:
+                    return self.async_show_form(step_id='credentials',data_schema=self._credentials_schema(),errors={'base':str(error)})
             if user_input.get('use_phone_login'):
                 self._setup_settings={k:v for k,v in settings.items() if k in AUTH_SETTINGS}
                 return await self.async_step_phone_login()
@@ -279,6 +285,7 @@ class BlueberryQConfigFlow(config_entries.ConfigFlow,domain=DOMAIN):
                 vol.Optional('client_id'):str,vol.Optional('redirect_uri'):str,
                 vol.Optional('scope'):str,vol.Optional('client_secret'):selector.TextSelector({'type':'password'})}
         fields[vol.Optional('use_phone_login',default=False)]=bool
+        fields[vol.Optional('sync_oauth_from_bridge',default=False)]=bool
         fields.update(self._attestation_fields())
         return vol.Schema(fields)
 
